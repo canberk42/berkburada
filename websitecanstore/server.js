@@ -1,20 +1,66 @@
 // Çalıştır: npm install && npm start  -> http://localhost:3000
-const express = require('express'), Database = require('better-sqlite3'), bcrypt = require('bcryptjs'), crypto = require('crypto'), fs = require('fs'), path = require('path');
+const express = require('express'), bcrypt = require('bcryptjs'), crypto = require('crypto'), fs = require('fs'), path = require('path');
 const E = process.env, ADMIN_USER = E.ADMIN_USER || 'admin', ADMIN_PASS = E.ADMIN_PASS || 'degistir123';
 const BASE = ((E.BASE_URL || 'http://localhost:3000').match(/https?:\/\/[^\s)\]]+/) || ['http://localhost:3000'])[0].replace(/\/+$/, '');
 const PORT = +E.PORT || 3000, PROD = E.NODE_ENV === 'production' || !!E.RENDER;
-const db = new Database(path.join(__dirname, 'magaza.db'));
-db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,email TEXT UNIQUE,name TEXT,pass TEXT,verified INTEGER DEFAULT 0,code TEXT,code_exp INTEGER);
-CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY,name TEXT,category TEXT,price REAL,image TEXT,description TEXT);
-CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY,user_id INTEGER,items TEXT,total REAL,created DATETIME DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,name TEXT,email TEXT,text TEXT);
-CREATE TABLE IF NOT EXISTS posts(id INTEGER PRIMARY KEY,title TEXT,body TEXT);`);
-for (const c of ['status TEXT', 'method TEXT', 'address TEXT', 'iyzi_token TEXT']) try { db.exec('ALTER TABLE orders ADD COLUMN ' + c) } catch {}
-if (!db.prepare('SELECT 1 FROM posts').get()) db.prepare('INSERT INTO posts(title,body) VALUES(?,?)').run('Hoş geldiniz', 'İlk blog yazımız. Admin panelinden yenilerini ekleyebilirsiniz.');
+
+// ---- Cloudflare D1 REST API ----
+const clean = v => (v || '').trim();
+const CF_ACCOUNT_ID = clean(E.CF_ACCOUNT_ID);
+const CF_D1_DB_ID = clean(E.CF_D1_DB_ID);
+const CF_D1_TOKEN = clean(E.CF_D1_TOKEN);
+
+async function d1Query(sql, params = []) {
+  if (!CF_ACCOUNT_ID || !CF_D1_DB_ID || !CF_D1_TOKEN) {
+    throw new Error('Cloudflare D1 ortam değişkenleri eksik (CF_ACCOUNT_ID, CF_D1_DB_ID, CF_D1_TOKEN)');
+  }
+  const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/${CF_D1_DB_ID}/query`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${CF_D1_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ sql, params }),
+    signal: AbortSignal.timeout(15000)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) {
+    const errMsg = (data.errors && data.errors[0] && data.errors[0].message) || data.message || `HTTP ${res.status}`;
+    throw new Error(`D1 Sorgu Hatası: ${errMsg}`);
+  }
+  const first = Array.isArray(data.result) ? data.result[0] : data.result;
+  return {
+    rows: Array.isArray(first?.results) ? first.results : [],
+    meta: first?.meta || {}
+  };
+}
+
+const d1All = async (sql, params = []) => (await d1Query(sql, params)).rows;
+const d1Get = async (sql, params = []) => (await d1Query(sql, params)).rows[0] || null;
+
+async function initDb() {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, name TEXT, pass TEXT, verified INTEGER DEFAULT 0, code TEXT, code_exp INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, category TEXT, price REAL, image TEXT, description TEXT)`,
+    `CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, items TEXT, total REAL, status TEXT, method TEXT, address TEXT, iyzi_token TEXT, created TEXT DEFAULT (datetime('now')))`,
+    `CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT, text TEXT)`,
+    `CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, body TEXT)`
+  ];
+  for (const s of statements) await d1Query(s);
+  for (const c of ['status TEXT', 'method TEXT', 'address TEXT', 'iyzi_token TEXT']) {
+    try { await d1Query('ALTER TABLE orders ADD COLUMN ' + c); } catch {}
+  }
+  const existingPost = await d1Get('SELECT id FROM posts LIMIT 1');
+  if (!existingPost) {
+    await d1Query('INSERT INTO posts(title,body) VALUES(?,?)', ['Hoş geldiniz', 'İlk blog yazımız. Admin panelinden yenilerini ekleyebilirsiniz.']);
+  }
+  console.log('[DB] Cloudflare D1 bağlantısı hazır.');
+}
+
 const UP = path.join(__dirname, 'public', 'uploads'); fs.mkdirSync(UP, { recursive: true });
 
 // ---- E-posta (Resend HTTPS API) ----
-const clean = v => (v || '').trim();
 const RESEND_API_KEY = clean(E.RESEND_API_KEY);
 const RESEND_FROM = clean(E.RESEND_FROM || E.SMTP_FROM) || 'Mağazam <noreply@berkburada.com>';
 
@@ -57,83 +103,118 @@ const sess = q => { const t = (q.headers.cookie || '').match(/sid=([a-f0-9]+)/);
 const login = (r, d) => { const id = crypto.randomBytes(24).toString('hex'); sessions.set(id, d); r.setHeader('Set-Cookie', `sid=${id}; HttpOnly; Path=/; SameSite=Lax${BASE.startsWith('https') ? '; Secure' : ''}`) };
 const needUser = (q, r, n) => { const s = sess(q); if (!s || !s.uid) return r.status(401).json({ error: 'Giriş yapın' }); q.s = s; n() };
 const needAdmin = (q, r, n) => { const s = sess(q); if (!s || !s.admin) return r.status(403).json({ error: 'Yetkisiz' }); n() };
-const getUser = email => db.prepare('SELECT * FROM users WHERE lower(email)=?').get(email);
+const getUser = email => d1Get('SELECT * FROM users WHERE lower(email)=?', [email]);
 const sendCode = async (email, subject) => {
   const code = String(crypto.randomInt(100000, 1000000));
-  db.prepare('UPDATE users SET code=?,code_exp=? WHERE lower(email)=?').run(code, Date.now() + 10 * 60000, email);
+  await d1Query('UPDATE users SET code=?,code_exp=? WHERE lower(email)=?', [code, Date.now() + 10 * 60000, email]);
   const bodyText = `Kodunuz: ${code}\nBu kod 10 dakika geçerlidir. Talebi siz yapmadıysanız bu e-postayı yok sayın.`;
   if (RESEND_API_KEY) await sendResendMail({ to: email, subject, text: bodyText });
   else if (PROD) throw new Error('RESEND_API_KEY ayarlı değil');
   else console.log(`[KOD] ${email}: ${code}`);
 };
 const sendLimited = email => { const k = 's' + email; if (limited(k, 5)) return true; fail(k); return false };
-const checkCode = (email, code) => {
-  const k = 'c' + email; if (limited(k)) return null; const u = getUser(email);
+const checkCode = async (email, code) => {
+  const k = 'c' + email; if (limited(k)) return null; const u = await getUser(email);
   if (!u || !u.code || u.code !== String(code ?? '').trim() || Date.now() > u.code_exp) { fail(k); return null } return u
 };
 
 app.post('/api/register', async (q, r) => {
-  const name = String(q.body.name || '').trim(), email = norm(q.body.email), pass = q.body.pass;
-  if (!name || !/^\S+@\S+\.\S+$/.test(email) || (pass || '').length < 6) return r.status(400).json({ error: 'Geçerli ad, e-posta ve en az 6 haneli şifre girin' });
-  const ex = getUser(email); if (ex && ex.verified) return r.status(400).json({ error: 'Bu e-posta kayıtlı' });
-  if (sendLimited(email)) return r.status(429).json({ error: 'Çok fazla kod istendi, 15 dk sonra tekrar deneyin' });
-  const h = bcrypt.hashSync(pass, 10);
-  if (ex) db.prepare('UPDATE users SET name=?,pass=? WHERE id=?').run(name, h, ex.id); else db.prepare('INSERT INTO users(email,name,pass) VALUES(?,?,?)').run(email, name, h);
-  try { await sendCode(email, 'Doğrulama kodunuz') } catch (e) { console.error('[MAIL] Gönderilemedi:', e.message); return r.status(500).json({ error: 'E-posta gönderilemedi, lütfen daha sonra tekrar deneyin' }) } r.json({ ok: true })
+  try {
+    const name = String(q.body.name || '').trim(), email = norm(q.body.email), pass = q.body.pass;
+    if (!name || !/^\S+@\S+\.\S+$/.test(email) || (pass || '').length < 6) return r.status(400).json({ error: 'Geçerli ad, e-posta ve en az 6 haneli şifre girin' });
+    const ex = await getUser(email); if (ex && ex.verified) return r.status(400).json({ error: 'Bu e-posta kayıtlı' });
+    if (sendLimited(email)) return r.status(429).json({ error: 'Çok fazla kod istendi, 15 dk sonra tekrar deneyin' });
+    const h = bcrypt.hashSync(pass, 10);
+    if (ex) await d1Query('UPDATE users SET name=?,pass=? WHERE id=?', [name, h, ex.id]);
+    else await d1Query('INSERT INTO users(email,name,pass) VALUES(?,?,?)', [email, name, h]);
+    try { await sendCode(email, 'Doğrulama kodunuz') } catch (e) { console.error('[MAIL] Gönderilemedi:', e.message); return r.status(500).json({ error: 'E-posta gönderilemedi, lütfen daha sonra tekrar deneyin' }) }
+    r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sunucu hatası' }) }
 });
-app.post('/api/verify', (q, r) => {
-  const u = checkCode(norm(q.body.email), q.body.code); if (!u) return r.status(400).json({ error: 'Kod hatalı, süresi dolmuş veya çok fazla deneme. Yeni kod isteyebilirsiniz.' });
-  db.prepare('UPDATE users SET verified=1,code=NULL WHERE id=?').run(u.id); login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
+app.post('/api/verify', async (q, r) => {
+  try {
+    const u = await checkCode(norm(q.body.email), q.body.code); if (!u) return r.status(400).json({ error: 'Kod hatalı, süresi dolmuş veya çok fazla deneme. Yeni kod isteyebilirsiniz.' });
+    await d1Query('UPDATE users SET verified=1,code=NULL WHERE id=?', [u.id]); login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sunucu hatası' }) }
 });
-app.post('/api/login', (q, r) => {
-  const k = 'l' + q.ip; if (limited(k, 8)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk sonra tekrar deneyin' });
-  const u = db.prepare('SELECT * FROM users WHERE lower(email)=? AND verified=1').get(norm(q.body.email));
-  if (!u || !bcrypt.compareSync(q.body.pass || '', u.pass)) { fail(k); return r.status(400).json({ error: 'E-posta veya şifre hatalı' }) } login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
+app.post('/api/login', async (q, r) => {
+  try {
+    const k = 'l' + q.ip; if (limited(k, 8)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk sonra tekrar deneyin' });
+    const u = await d1Get('SELECT * FROM users WHERE lower(email)=? AND verified=1', [norm(q.body.email)]);
+    if (!u || !bcrypt.compareSync(q.body.pass || '', u.pass)) { fail(k); return r.status(400).json({ error: 'E-posta veya şifre hatalı' }) } login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sunucu hatası' }) }
 });
 app.post('/api/forgot', async (q, r) => {
-  const k = 'f' + q.ip; if (limited(k, 5)) return r.status(429).json({ error: 'Çok fazla deneme' }); fail(k);
-  const email = norm(q.body.email); const u = db.prepare('SELECT * FROM users WHERE lower(email)=? AND verified=1').get(email);
-  if (u && !sendLimited(email)) try { await sendCode(email, 'Şifre sıfırlama kodu') } catch (e) { console.error('[MAIL] Gönderilemedi:', e.message) } r.json({ ok: true })
+  try {
+    const k = 'f' + q.ip; if (limited(k, 5)) return r.status(429).json({ error: 'Çok fazla deneme' }); fail(k);
+    const email = norm(q.body.email); const u = await d1Get('SELECT * FROM users WHERE lower(email)=? AND verified=1', [email]);
+    if (u && !sendLimited(email)) try { await sendCode(email, 'Şifre sıfırlama kodu') } catch (e) { console.error('[MAIL] Gönderilemedi:', e.message) } r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sunucu hatası' }) }
 });
-app.post('/api/reset', (q, r) => {
-  if ((q.body.pass || '').length < 6) return r.status(400).json({ error: 'Şifre en az 6 karakter' });
-  const u = checkCode(norm(q.body.email), q.body.code); if (!u) return r.status(400).json({ error: 'Kod hatalı veya süresi dolmuş. Yeni kod isteyebilirsiniz.' });
-  db.prepare('UPDATE users SET pass=?,code=NULL WHERE id=?').run(bcrypt.hashSync(q.body.pass, 10), u.id); login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
+app.post('/api/reset', async (q, r) => {
+  try {
+    if ((q.body.pass || '').length < 6) return r.status(400).json({ error: 'Şifre en az 6 karakter' });
+    const u = await checkCode(norm(q.body.email), q.body.code); if (!u) return r.status(400).json({ error: 'Kod hatalı veya süresi dolmuş. Yeni kod isteyebilirsiniz.' });
+    await d1Query('UPDATE users SET pass=?,code=NULL WHERE id=?', [bcrypt.hashSync(q.body.pass, 10), u.id]); login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sunucu hatası' }) }
 });
 app.post('/api/logout', (q, r) => { const t = (q.headers.cookie || '').match(/sid=([a-f0-9]+)/); if (t) sessions.delete(t[1]); r.json({ ok: true }) });
 app.get('/api/me', (q, r) => { const s = sess(q); r.json(s ? { name: s.name, admin: !!s.admin, user: !!s.uid } : {}) });
-app.get('/api/products', (q, r) => r.json(db.prepare('SELECT * FROM products ORDER BY id DESC').all()));
-app.get('/api/posts', (q, r) => r.json(db.prepare('SELECT * FROM posts ORDER BY id DESC').all()));
-app.post('/api/contact', (q, r) => { const { name, email, text } = q.body; if (!name || !email || !text) return r.status(400).json({ error: 'Tüm alanlar gerekli' }); db.prepare('INSERT INTO messages(name,email,text) VALUES(?,?,?)').run(name, norm(email), text); r.json({ ok: true }) });
-app.get('/api/my-orders', needUser, (q, r) => r.json(db.prepare('SELECT id,items,total,status,method,created FROM orders WHERE user_id=? ORDER BY id DESC').all(q.s.uid)));
-
-app.post('/api/order', needUser, (q, r) => {
-  const { items = {}, address = {}, method } = q.body;
-  if (!['card', 'cod', 'eft'].includes(method)) return r.status(400).json({ error: 'Ödeme yöntemi seçin' });
-  if (!address.name || !address.phone || !address.city || !address.address) return r.status(400).json({ error: 'Teslimat bilgilerini doldurun' });
-  let total = 0; const list = []; for (const [id, n] of Object.entries(items)) { const p = db.prepare('SELECT * FROM products WHERE id=?').get(id), qty = Math.min(parseInt(n) || 0, 99); if (p && qty > 0) { total += p.price * qty; list.push({ id: p.id, name: p.name, category: p.category, qty, price: p.price }) } }
-  if (!list.length) return r.status(400).json({ error: 'Sepet boş' });
-  if (method === 'card' && !iyzi) return r.status(400).json({ error: 'Kart ödemesi henüz yapılandırılmadı (iyzico anahtarları gerekli)' });
-  const status = { card: 'Ödeme Bekliyor', eft: 'Havale Bekleniyor', cod: 'Hazırlanıyor' }[method];
-  const id = db.prepare('INSERT INTO orders(user_id,items,total,status,method,address) VALUES(?,?,?,?,?,?)').run(q.s.uid, JSON.stringify(list), total, status, method, JSON.stringify(address)).lastInsertRowid;
-  if (method !== 'card') return r.json({ ok: true, total, id, iban: method === 'eft' ? (E.IBAN || 'IBAN bilgisi admin tarafından eklenmedi') : null });
-  const u = db.prepare('SELECT * FROM users WHERE id=?').get(q.s.uid), [fn, ...ln] = address.name.trim().split(' '), ad = { contactName: address.name, city: address.city, country: 'Turkey', address: address.address };
-  iyzi.checkoutFormInitialize.create({
-    locale: 'tr', conversationId: String(id), price: total.toFixed(2), paidPrice: total.toFixed(2), currency: 'TRY', basketId: String(id), paymentGroup: 'PRODUCT', callbackUrl: BASE + '/api/pay/callback', enabledInstallments: [1],
-    buyer: { id: String(u.id), name: fn, surname: ln.join(' ') || fn, gsmNumber: address.phone, email: u.email, identityNumber: '11111111111', registrationAddress: address.address, ip: q.ip || '85.34.78.112', city: address.city, country: 'Turkey' },
-    shippingAddress: ad, billingAddress: ad, basketItems: list.map(i => ({ id: String(i.id), name: i.name, category1: i.category || 'Genel', itemType: 'PHYSICAL', price: (i.price * i.qty).toFixed(2) }))
-  }, (err, res) => {
-    if (err || res.status !== 'success') { db.prepare('UPDATE orders SET status=? WHERE id=?').run('İptal', id); return r.status(500).json({ error: 'Ödeme başlatılamadı: ' + (res && res.errorMessage || '') }) }
-    db.prepare('UPDATE orders SET iyzi_token=? WHERE id=?').run(res.token, id); r.json({ ok: true, url: res.paymentPageUrl })
-  })
+app.get('/api/products', async (q, r) => {
+  try { r.json(await d1All('SELECT * FROM products ORDER BY id DESC')) }
+  catch (e) { console.error(e); r.status(500).json({ error: 'Ürünler yüklenemedi' }) }
 });
-app.post('/api/pay/callback', (q, r) => {
-  const token = q.body.token, o = iyzi && db.prepare('SELECT * FROM orders WHERE iyzi_token=? AND status=?').get(token, 'Ödeme Bekliyor');
-  if (!o) return r.redirect('/siparislerim.html');
-  iyzi.checkoutForm.retrieve({ locale: 'tr', conversationId: String(o.id), token }, (err, res) => {
-    const ok = !err && res.paymentStatus === 'SUCCESS' && String(res.basketId) === String(o.id) && Math.abs(parseFloat(res.paidPrice) - o.total) < 0.01;
-    db.prepare('UPDATE orders SET status=? WHERE id=?').run(ok ? 'Hazırlanıyor' : 'İptal', o.id); r.redirect('/siparislerim.html?' + (ok ? 'ok' : 'fail'))
-  })
+app.get('/api/posts', async (q, r) => {
+  try { r.json(await d1All('SELECT * FROM posts ORDER BY id DESC')) }
+  catch (e) { console.error(e); r.status(500).json({ error: 'Yazılar yüklenemedi' }) }
+});
+app.post('/api/contact', async (q, r) => {
+  try {
+    const { name, email, text } = q.body; if (!name || !email || !text) return r.status(400).json({ error: 'Tüm alanlar gerekli' });
+    await d1Query('INSERT INTO messages(name,email,text) VALUES(?,?,?)', [name, norm(email), text]); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Mesaj gönderilemedi' }) }
+});
+app.get('/api/my-orders', needUser, async (q, r) => {
+  try { r.json(await d1All('SELECT id,items,total,status,method,created FROM orders WHERE user_id=? ORDER BY id DESC', [q.s.uid])) }
+  catch (e) { console.error(e); r.status(500).json({ error: 'Siparişler alınamadı' }) }
+});
+
+app.post('/api/order', needUser, async (q, r) => {
+  try {
+    const { items = {}, address = {}, method } = q.body;
+    if (!['card', 'cod', 'eft'].includes(method)) return r.status(400).json({ error: 'Ödeme yöntemi seçin' });
+    if (!address.name || !address.phone || !address.city || !address.address) return r.status(400).json({ error: 'Teslimat bilgilerini doldurun' });
+    let total = 0; const list = [];
+    for (const [id, n] of Object.entries(items)) {
+      const p = await d1Get('SELECT * FROM products WHERE id=?', [id]), qty = Math.min(parseInt(n) || 0, 99);
+      if (p && qty > 0) { total += p.price * qty; list.push({ id: p.id, name: p.name, category: p.category, qty, price: p.price }) }
+    }
+    if (!list.length) return r.status(400).json({ error: 'Sepet boş' });
+    if (method === 'card' && !iyzi) return r.status(400).json({ error: 'Kart ödemesi henüz yapılandırılmadı (iyzico anahtarları gerekli)' });
+    const status = { card: 'Ödeme Bekliyor', eft: 'Havale Bekleniyor', cod: 'Hazırlanıyor' }[method];
+    const ins = await d1Query('INSERT INTO orders(user_id,items,total,status,method,address) VALUES(?,?,?,?,?,?)', [q.s.uid, JSON.stringify(list), total, status, method, JSON.stringify(address)]);
+    const id = ins.meta?.last_row_id;
+    if (method !== 'card') return r.json({ ok: true, total, id, iban: method === 'eft' ? (E.IBAN || 'IBAN bilgisi admin tarafından eklenmedi') : null });
+    const u = await d1Get('SELECT * FROM users WHERE id=?', [q.s.uid]), [fn, ...ln] = address.name.trim().split(' '), ad = { contactName: address.name, city: address.city, country: 'Turkey', address: address.address };
+    iyzi.checkoutFormInitialize.create({
+      locale: 'tr', conversationId: String(id), price: total.toFixed(2), paidPrice: total.toFixed(2), currency: 'TRY', basketId: String(id), paymentGroup: 'PRODUCT', callbackUrl: BASE + '/api/pay/callback', enabledInstallments: [1],
+      buyer: { id: String(u.id), name: fn, surname: ln.join(' ') || fn, gsmNumber: address.phone, email: u.email, identityNumber: '11111111111', registrationAddress: address.address, ip: q.ip || '85.34.78.112', city: address.city, country: 'Turkey' },
+      shippingAddress: ad, billingAddress: ad, basketItems: list.map(i => ({ id: String(i.id), name: i.name, category1: i.category || 'Genel', itemType: 'PHYSICAL', price: (i.price * i.qty).toFixed(2) }))
+    }, async (err, res) => {
+      if (err || res.status !== 'success') { await d1Query('UPDATE orders SET status=? WHERE id=?', ['İptal', id]); return r.status(500).json({ error: 'Ödeme başlatılamadı: ' + (res && res.errorMessage || '') }) }
+      await d1Query('UPDATE orders SET iyzi_token=? WHERE id=?', [res.token, id]); r.json({ ok: true, url: res.paymentPageUrl })
+    })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sipariş oluşturulamadı' }) }
+});
+app.post('/api/pay/callback', async (q, r) => {
+  try {
+    const token = q.body.token, o = iyzi && await d1Get('SELECT * FROM orders WHERE iyzi_token=? AND status=?', [token, 'Ödeme Bekliyor']);
+    if (!o) return r.redirect('/siparislerim.html');
+    iyzi.checkoutForm.retrieve({ locale: 'tr', conversationId: String(o.id), token }, async (err, res) => {
+      const ok = !err && res.paymentStatus === 'SUCCESS' && String(res.basketId) === String(o.id) && Math.abs(parseFloat(res.paidPrice) - o.total) < 0.01;
+      await d1Query('UPDATE orders SET status=? WHERE id=?', [ok ? 'Hazırlanıyor' : 'İptal', o.id]); r.redirect('/siparislerim.html?' + (ok ? 'ok' : 'fail'))
+    })
+  } catch (e) { console.error(e); r.redirect('/siparislerim.html?fail') }
 });
 
 // Admin
@@ -145,12 +226,36 @@ app.post('/api/admin/upload', needAdmin, (q, r) => {
   const m = /^data:image\/(png|jpeg|webp);base64,(.+)$/.exec(q.body.data || ''); if (!m) return r.status(400).json({ error: 'Sadece png/jpg/webp' });
   const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] == 'jpeg' ? 'jpg' : m[1]); fs.writeFileSync(path.join(UP, f), Buffer.from(m[2], 'base64')); r.json({ url: '/uploads/' + f })
 });
-app.post('/api/admin/products', needAdmin, (q, r) => {
-  const { name, category, price, image, description } = q.body; if (!name || !(price > 0)) return r.status(400).json({ error: 'Ad ve fiyat gerekli' });
-  db.prepare('INSERT INTO products(name,category,price,image,description) VALUES(?,?,?,?,?)').run(name, category || 'Genel', price, image || '', description || ''); r.json({ ok: true })
+app.post('/api/admin/products', needAdmin, async (q, r) => {
+  try {
+    const { name, category, price, image, description } = q.body; if (!name || !(price > 0)) return r.status(400).json({ error: 'Ad ve fiyat gerekli' });
+    await d1Query('INSERT INTO products(name,category,price,image,description) VALUES(?,?,?,?,?)', [name, category || 'Genel', price, image || '', description || '']); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Ürün eklenemedi' }) }
 });
-app.delete('/api/admin/products/:id', needAdmin, (q, r) => { db.prepare('DELETE FROM products WHERE id=?').run(q.params.id); r.json({ ok: true }) });
-app.post('/api/admin/posts', needAdmin, (q, r) => { db.prepare('INSERT INTO posts(title,body) VALUES(?,?)').run(q.body.title, q.body.body); r.json({ ok: true }) });
-app.put('/api/admin/orders/:id', needAdmin, (q, r) => { if (!STATUSES.includes(q.body.status)) return r.status(400).json({ error: 'Geçersiz durum' }); db.prepare('UPDATE orders SET status=? WHERE id=?').run(q.body.status, q.params.id); r.json({ ok: true }) });
-app.get('/api/admin/data', needAdmin, (q, r) => r.json({ statuses: STATUSES, orders: db.prepare('SELECT o.*,u.email FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC').all(), messages: db.prepare('SELECT * FROM messages ORDER BY id DESC').all() }));
-app.listen(PORT, () => console.log('Site: ' + BASE + ' (port ' + PORT + ')'));
+app.delete('/api/admin/products/:id', needAdmin, async (q, r) => {
+  try { await d1Query('DELETE FROM products WHERE id=?', [q.params.id]); r.json({ ok: true }) }
+  catch (e) { console.error(e); r.status(500).json({ error: 'Ürün silinemedi' }) }
+});
+app.post('/api/admin/posts', needAdmin, async (q, r) => {
+  try { await d1Query('INSERT INTO posts(title,body) VALUES(?,?)', [q.body.title, q.body.body]); r.json({ ok: true }) }
+  catch (e) { console.error(e); r.status(500).json({ error: 'Yazı eklenemedi' }) }
+});
+app.put('/api/admin/orders/:id', needAdmin, async (q, r) => {
+  try {
+    if (!STATUSES.includes(q.body.status)) return r.status(400).json({ error: 'Geçersiz durum' });
+    await d1Query('UPDATE orders SET status=? WHERE id=?', [q.body.status, q.params.id]); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sipariş güncellenemedi' }) }
+});
+app.get('/api/admin/data', needAdmin, async (q, r) => {
+  try {
+    const orders = await d1All('SELECT o.*,u.email FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC');
+    const messages = await d1All('SELECT * FROM messages ORDER BY id DESC');
+    r.json({ statuses: STATUSES, orders, messages })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Admin verileri alınamadı' }) }
+});
+
+initDb()
+  .catch(err => console.error('[DB] Başlangıç kontrolünde hata:', err.message))
+  .finally(() => {
+    app.listen(PORT, () => console.log('Site: ' + BASE + ' (port ' + PORT + ')'));
+  });
