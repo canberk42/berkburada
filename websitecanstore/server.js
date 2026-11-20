@@ -251,4 +251,99 @@ app.get('/api/my-orders', needUser, async (q, r) => {
   catch (e) { console.error(e); r.status(500).json({ error: 'Siparişler alınamadı' }) }
 });
 
-app.post('/api/
+app.post('/api/order', needUser, async (q, r) => {
+  try {
+    const { items = {}, address = {}, method } = q.body;
+    if (!['card', 'cod', 'eft'].includes(method)) return r.status(400).json({ error: 'Ödeme yöntemi seçin' });
+    if (!address.name || !address.phone || !address.city || !address.address) return r.status(400).json({ error: 'Teslimat bilgilerini doldurun' });
+    let total = 0; const list = [];
+    for (const [id, n] of Object.entries(items)) {
+      const p = await d1Get('SELECT * FROM products WHERE id=?', [id]), qty = Math.min(parseInt(n) || 0, 99);
+      if (p && qty > 0) { total += p.price * qty; list.push({ id: p.id, name: p.name, category: p.category, qty, price: p.price }) }
+    }
+    if (!list.length) return r.status(400).json({ error: 'Sepet boş' });
+    if (method === 'card' && !iyzi) return r.status(400).json({ error: 'Kart ödemesi henüz yapılandırılmadı (iyzico anahtarları gerekli)' });
+    const status = { card: 'Ödeme Bekliyor', eft: 'Havale Bekleniyor', cod: 'Hazırlanıyor' }[method];
+    const ins = await d1Query('INSERT INTO orders(user_id,items,total,status,method,address) VALUES(?,?,?,?,?,?)', [q.s.uid, JSON.stringify(list), total, status, method, JSON.stringify(address)]);
+    const id = ins.meta?.last_row_id;
+    if (method !== 'card') return r.json({ ok: true, total, id, iban: method === 'eft' ? (E.IBAN || 'IBAN bilgisi admin tarafından eklenmedi') : null });
+    const u = await d1Get('SELECT * FROM users WHERE id=?', [q.s.uid]), [fn, ...ln] = address.name.trim().split(' '), ad = { contactName: address.name, city: address.city, country: 'Turkey', address: address.address };
+    iyzi.checkoutFormInitialize.create({
+      locale: 'tr', conversationId: String(id), price: total.toFixed(2), paidPrice: total.toFixed(2), currency: 'TRY', basketId: String(id), paymentGroup: 'PRODUCT', callbackUrl: BASE + '/api/pay/callback', enabledInstallments: [1],
+      buyer: { id: String(u.id), name: fn, surname: ln.join(' ') || fn, gsmNumber: address.phone, email: u.email, identityNumber: '11111111111', registrationAddress: address.address, ip: q.ip || '85.34.78.112', city: address.city, country: 'Turkey' },
+      shippingAddress: ad, billingAddress: ad, basketItems: list.map(i => ({ id: String(i.id), name: i.name, category1: i.category || 'Genel', itemType: 'PHYSICAL', price: (i.price * i.qty).toFixed(2) }))
+    }, async (err, res) => {
+      if (err || res.status !== 'success') { await d1Query('UPDATE orders SET status=? WHERE id=?', ['İptal', id]); return r.status(500).json({ error: 'Ödeme başlatılamadı: ' + (res && res.errorMessage || '') }) }
+      await d1Query('UPDATE orders SET iyzi_token=? WHERE id=?', [res.token, id]); r.json({ ok: true, url: res.paymentPageUrl })
+    })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sipariş oluşturulamadı' }) }
+});
+app.post('/api/pay/callback', async (q, r) => {
+  try {
+    const token = q.body.token, o = iyzi && await d1Get('SELECT * FROM orders WHERE iyzi_token=? AND status=?', [token, 'Ödeme Bekliyor']);
+    if (!o) return r.redirect('/siparislerim.html');
+    iyzi.checkoutForm.retrieve({ locale: 'tr', conversationId: String(o.id), token }, async (err, res) => {
+      const ok = !err && res.paymentStatus === 'SUCCESS' && String(res.basketId) === String(o.id) && Math.abs(parseFloat(res.paidPrice) - o.total) < 0.01;
+      await d1Query('UPDATE orders SET status=? WHERE id=?', [ok ? 'Hazırlanıyor' : 'İptal', o.id]); r.redirect('/siparislerim.html?' + (ok ? 'ok' : 'fail'))
+    })
+  } catch (e) { console.error(e); r.redirect('/siparislerim.html?fail') }
+});
+
+// Admin
+app.post('/api/admin/login', (q, r) => {
+  const k = 'a' + q.ip; if (limited(k)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk bekleyin' });
+  if (q.body.user === ADMIN_USER && q.body.pass === ADMIN_PASS) { login(r, { admin: true, name: 'Admin' }); return r.json({ ok: true }) } fail(k); r.status(400).json({ error: 'Hatalı bilgi' })
+});
+app.post('/api/admin/upload', needAdmin, async (q, r) => {
+  try {
+    const dataUrl = String(q.body.data || '');
+    const m = /^data:image\/(png|jpeg|webp);base64,(.+)$/.exec(dataUrl);
+    if (!m) return r.status(400).json({ error: 'Sadece png/jpg/webp' });
+    if (hasCloudinary) {
+      const url = await uploadToCloudinary(dataUrl);
+      return r.json({ url });
+    }
+    const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] == 'jpeg' ? 'jpg' : m[1]);
+    fs.writeFileSync(path.join(UP, f), Buffer.from(m[2], 'base64'));
+    r.json({ url: '/uploads/' + f });
+  } catch (e) {
+    console.error('[UPLOAD]', e.message);
+    r.status(500).json({ error: 'Görsel yüklenemedi: ' + e.message });
+  }
+});
+app.post('/api/admin/products', needAdmin, async (q, r) => {
+  try {
+    const { name, category, price, image, description } = q.body; if (!name || !(price > 0)) return r.status(400).json({ error: 'Ad ve fiyat gerekli' });
+    await d1Query('INSERT INTO products(name,category,price,image,description) VALUES(?,?,?,?,?)', [name, category || 'Genel', price, image || '', description || '']); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Ürün eklenemedi' }) }
+});
+app.delete('/api/admin/products/:id', needAdmin, async (q, r) => {
+  try { await d1Query('DELETE FROM products WHERE id=?', [q.params.id]); r.json({ ok: true }) }
+  catch (e) { console.error(e); r.status(500).json({ error: 'Ürün silinemedi' }) }
+});
+app.post('/api/admin/posts', needAdmin, async (q, r) => {
+  try {
+    const { title, body } = formatBlogPost(q.body.title, q.body.body);
+    if (!title || !body) return r.status(400).json({ error: 'Başlık ve içerik gerekli' });
+    await d1Query('INSERT INTO posts(title,body) VALUES(?,?)', [title, body]); r.json({ ok: true, post: { title, body } })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Yazı eklenemedi' }) }
+});
+app.put('/api/admin/orders/:id', needAdmin, async (q, r) => {
+  try {
+    if (!STATUSES.includes(q.body.status)) return r.status(400).json({ error: 'Geçersiz durum' });
+    await d1Query('UPDATE orders SET status=? WHERE id=?', [q.body.status, q.params.id]); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Sipariş güncellenemedi' }) }
+});
+app.get('/api/admin/data', needAdmin, async (q, r) => {
+  try {
+    const orders = await d1All('SELECT o.*,u.email FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC');
+    const messages = await d1All('SELECT * FROM messages ORDER BY id DESC');
+    r.json({ statuses: STATUSES, orders, messages })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Admin verileri alınamadı' }) }
+});
+
+initDb()
+  .catch(err => console.error('[DB] Başlangıç kontrolünde hata:', err.message))
+  .finally(() => {
+    app.listen(PORT, () => console.log('Site: ' + BASE + ' (port ' + PORT + ')'));
+  });
