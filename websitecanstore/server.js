@@ -106,19 +106,21 @@ if (hasCloudinary) console.log(`[MEDIA] Cloudinary aktif (cloud: ${CLD_CLOUD})`)
 else console.warn('[MEDIA] Cloudinary ayarlı değil — yerel /uploads kullanılacak (deploy sonrası silinebilir).');
 
 async function uploadToCloudinary(dataUrl) {
+  const cloudName = String(E.CLOUDINARY_CLOUD_NAME || '').replace(/\s+/g, '');
+  const apiKey = String(E.CLOUDINARY_API_KEY || '').replace(/\s+/g, '');
+  const apiSecret = String(E.CLOUDINARY_API_SECRET || '').replace(/\s+/g, '');
+
   const timestamp = Math.floor(Date.now() / 1000);
-  const folder = 'berkburada/products';
-  const toSign = `folder=${folder}&timestamp=${timestamp}${CLD_SECRET}`;
+  const toSign = `timestamp=${timestamp}${apiSecret}`;
   const signature = crypto.createHash('sha1').update(toSign).digest('hex');
 
   const form = new FormData();
   form.append('file', dataUrl);
-  form.append('api_key', CLD_KEY);
+  form.append('api_key', apiKey);
   form.append('timestamp', String(timestamp));
-  form.append('folder', folder);
   form.append('signature', signature);
 
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLD_CLOUD}/image/upload`, {
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
     method: 'POST',
     body: form,
     signal: AbortSignal.timeout(20000)
@@ -128,7 +130,7 @@ async function uploadToCloudinary(dataUrl) {
     throw new Error(data.error?.message || `Cloudinary yükleme hatası (${res.status})`);
   }
   return data.secure_url;
-}
+}}
 
 // ---- E-posta (Resend HTTPS API) ----
 const RESEND_API_KEY = clean(E.RESEND_API_KEY);
