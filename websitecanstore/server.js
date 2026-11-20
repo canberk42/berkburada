@@ -93,28 +93,34 @@ async function initDb() {
 const UP = path.join(__dirname, 'public', 'uploads'); fs.mkdirSync(UP, { recursive: true });
 
 // ---- Cloudinary Kalıcı Görsel Yükleme ----
-const CLD_CLOUD = clean(E.CLOUDINARY_CLOUD_NAME);
-const CLD_KEY = clean(E.CLOUDINARY_API_KEY);
-const CLD_SECRET = clean(E.CLOUDINARY_API_SECRET);
-const hasCloudinary = !!(CLD_CLOUD && CLD_KEY && CLD_SECRET);
+const CLD_CLOUD = String(E.CLOUDINARY_CLOUD_NAME || '').replace(/\s+/g, '');
+const CLD_KEY = String(E.CLOUDINARY_API_KEY || '').replace(/\s+/g, '');
+const CLD_SECRET = String(E.CLOUDINARY_API_SECRET || '').replace(/\s+/g, '');
+const CLD_PRESET = String(E.CLOUDINARY_UPLOAD_PRESET || '').replace(/\s+/g, '');
+const hasCloudinary = !!(CLD_CLOUD && (CLD_PRESET || (CLD_KEY && CLD_SECRET)));
 
-if (hasCloudinary) console.log(`[MEDIA] Cloudinary aktif (cloud: ${CLD_CLOUD})`);
+if (hasCloudinary) console.log(`[MEDIA] Cloudinary aktif (cloud: ${CLD_CLOUD}${CLD_PRESET ? ', preset: ' + CLD_PRESET : ''})`);
 else console.warn('[MEDIA] Cloudinary ayarlı değil — yerel /uploads kullanılacak (deploy sonrası silinebilir).');
 
 async function uploadToCloudinary(dataUrl) {
   const cloudName = String(E.CLOUDINARY_CLOUD_NAME || '').replace(/\s+/g, '');
-  const apiKey = String(E.CLOUDINARY_API_KEY || '').replace(/\s+/g, '');
-  const apiSecret = String(E.CLOUDINARY_API_SECRET || '').replace(/\s+/g, '');
-
-  const timestamp = Math.floor(Date.now() / 1000);
-  const toSign = `timestamp=${timestamp}${apiSecret}`;
-  const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+  const uploadPreset = String(E.CLOUDINARY_UPLOAD_PRESET || '').replace(/\s+/g, '');
 
   const form = new FormData();
   form.append('file', dataUrl);
-  form.append('api_key', apiKey);
-  form.append('timestamp', String(timestamp));
-  form.append('signature', signature);
+
+  if (uploadPreset) {
+    form.append('upload_preset', uploadPreset);
+  } else {
+    const apiKey = String(E.CLOUDINARY_API_KEY || '').replace(/\s+/g, '');
+    const apiSecret = String(E.CLOUDINARY_API_SECRET || '').replace(/\s+/g, '');
+    const timestamp = Math.floor(Date.now() / 1000);
+    const toSign = `timestamp=${timestamp}${apiSecret}`;
+    const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+    form.append('api_key', apiKey);
+    form.append('timestamp', String(timestamp));
+    form.append('signature', signature);
+  }
 
   const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
     method: 'POST',
