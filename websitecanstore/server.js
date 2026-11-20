@@ -1,0 +1,86 @@
+// Çalıştır: npm install && npm start  -> http://localhost:3000
+const express=require('express'),Database=require('better-sqlite3'),bcrypt=require('bcryptjs'),crypto=require('crypto'),nodemailer=require('nodemailer'),fs=require('fs'),path=require('path');
+const E=process.env, ADMIN_USER=E.ADMIN_USER||'admin', ADMIN_PASS=E.ADMIN_PASS||'degistir123', BASE=E.BASE_URL||'http://localhost:3000';
+const db=new Database(path.join(__dirname,'magaza.db'));
+db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,email TEXT UNIQUE,name TEXT,pass TEXT,verified INTEGER DEFAULT 0,code TEXT,code_exp INTEGER);
+CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY,name TEXT,category TEXT,price REAL,image TEXT,description TEXT);
+CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY,user_id INTEGER,items TEXT,total REAL,created DATETIME DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,name TEXT,email TEXT,text TEXT);
+CREATE TABLE IF NOT EXISTS posts(id INTEGER PRIMARY KEY,title TEXT,body TEXT);`);
+for(const c of ['status TEXT','method TEXT','address TEXT','iyzi_token TEXT'])try{db.exec('ALTER TABLE orders ADD COLUMN '+c)}catch{}
+if(!db.prepare('SELECT 1 FROM posts').get())db.prepare('INSERT INTO posts(title,body) VALUES(?,?)').run('Hoş geldiniz','İlk blog yazımız. Admin panelinden yenilerini ekleyebilirsiniz.');
+const UP=path.join(__dirname,'public','uploads');fs.mkdirSync(UP,{recursive:true});
+const mail=E.SMTP_HOST?nodemailer.createTransport({host:E.SMTP_HOST,port:+E.SMTP_PORT||587,auth:{user:E.SMTP_USER,pass:E.SMTP_PASS}}):null;
+const Iyzipay=E.IYZICO_API_KEY?require('iyzipay'):null;
+const iyzi=Iyzipay&&new Iyzipay({apiKey:E.IYZICO_API_KEY,secretKey:E.IYZICO_SECRET,uri:E.IYZICO_URI||'https://sandbox-api.iyzipay.com'});
+const STATUSES=['Ödeme Bekliyor','Havale Bekleniyor','Hazırlanıyor','Kargoda','Teslim Edildi','İptal'];
+const sessions=new Map(),tries=new Map();
+const limited=(k,max=5,win=15*60000)=>{const n=Date.now(),a=(tries.get(k)||[]).filter(t=>n-t<win);tries.set(k,a);return a.length>=max};
+const fail=k=>{const a=tries.get(k)||[];a.push(Date.now());tries.set(k,a)};
+const app=express();app.use(express.json({limit:'8mb'}));app.use(express.urlencoded({extended:false}));app.use(express.static(path.join(__dirname,'public')));
+const sess=q=>{const t=(q.headers.cookie||'').match(/sid=([a-f0-9]+)/);return t&&sessions.get(t[1])};
+const login=(r,d)=>{const id=crypto.randomBytes(24).toString('hex');sessions.set(id,d);r.setHeader('Set-Cookie',`sid=${id}; HttpOnly; Path=/; SameSite=Lax`)};
+const needUser=(q,r,n)=>{const s=sess(q);if(!s||!s.uid)return r.status(401).json({error:'Giriş yapın'});q.s=s;n()};
+const needAdmin=(q,r,n)=>{const s=sess(q);if(!s||!s.admin)return r.status(403).json({error:'Yetkisiz'});n()};
+const sendCode=async(email,subject)=>{const code=String(crypto.randomInt(100000,999999));
+ db.prepare('UPDATE users SET code=?,code_exp=? WHERE email=?').run(code,Date.now()+10*60000,email);
+ if(mail)await mail.sendMail({from:E.SMTP_USER,to:email,subject,text:`Kodunuz: ${code} (10 dk geçerli)`});else console.log(`[KOD] ${email}: ${code}`)};
+const checkCode=(email,code)=>{const k='c'+email;if(limited(k))return null;const u=db.prepare('SELECT * FROM users WHERE email=?').get(email);
+ if(!u||!u.code||u.code!==String(code)||Date.now()>u.code_exp){fail(k);return null}return u};
+
+app.post('/api/register',async(q,r)=>{const{name,email,pass}=q.body;
+ if(!name||!/^\S+@\S+\.\S+$/.test(email||'')||(pass||'').length<6)return r.status(400).json({error:'Geçerli ad, e-posta ve en az 6 haneli şifre girin'});
+ const ex=db.prepare('SELECT * FROM users WHERE email=?').get(email);if(ex&&ex.verified)return r.status(400).json({error:'Bu e-posta kayıtlı'});
+ const h=bcrypt.hashSync(pass,10);
+ if(ex)db.prepare('UPDATE users SET name=?,pass=? WHERE id=?').run(name,h,ex.id);else db.prepare('INSERT INTO users(email,name,pass) VALUES(?,?,?)').run(email,name,h);
+ try{await sendCode(email,'Doğrulama kodunuz')}catch{return r.status(500).json({error:'E-posta gönderilemedi (SMTP ayarlarını kontrol edin)'})}r.json({ok:true})});
+app.post('/api/verify',(q,r)=>{const u=checkCode(q.body.email,q.body.code);if(!u)return r.status(400).json({error:'Kod hatalı, süresi dolmuş veya çok fazla deneme'});
+ db.prepare('UPDATE users SET verified=1,code=NULL WHERE id=?').run(u.id);login(r,{uid:u.id,name:u.name});r.json({ok:true})});
+app.post('/api/login',(q,r)=>{const k='l'+q.ip;if(limited(k,8))return r.status(429).json({error:'Çok fazla deneme, 15 dk sonra tekrar deneyin'});
+ const u=db.prepare('SELECT * FROM users WHERE email=? AND verified=1').get(q.body.email);
+ if(!u||!bcrypt.compareSync(q.body.pass||'',u.pass)){fail(k);return r.status(400).json({error:'E-posta veya şifre hatalı'})}login(r,{uid:u.id,name:u.name});r.json({ok:true})});
+app.post('/api/forgot',async(q,r)=>{const k='f'+q.ip;if(limited(k,5))return r.status(429).json({error:'Çok fazla deneme'});fail(k);
+ const u=db.prepare('SELECT * FROM users WHERE email=? AND verified=1').get(q.body.email);if(u)try{await sendCode(u.email,'Şifre sıfırlama kodu')}catch{}r.json({ok:true})});
+app.post('/api/reset',(q,r)=>{if((q.body.pass||'').length<6)return r.status(400).json({error:'Şifre en az 6 karakter'});
+ const u=checkCode(q.body.email,q.body.code);if(!u)return r.status(400).json({error:'Kod hatalı veya süresi dolmuş'});
+ db.prepare('UPDATE users SET pass=?,code=NULL WHERE id=?').run(bcrypt.hashSync(q.body.pass,10),u.id);login(r,{uid:u.id,name:u.name});r.json({ok:true})});
+app.post('/api/logout',(q,r)=>{const t=(q.headers.cookie||'').match(/sid=([a-f0-9]+)/);if(t)sessions.delete(t[1]);r.json({ok:true})});
+app.get('/api/me',(q,r)=>{const s=sess(q);r.json(s?{name:s.name,admin:!!s.admin,user:!!s.uid}:{})});
+app.get('/api/products',(q,r)=>r.json(db.prepare('SELECT * FROM products ORDER BY id DESC').all()));
+app.get('/api/posts',(q,r)=>r.json(db.prepare('SELECT * FROM posts ORDER BY id DESC').all()));
+app.post('/api/contact',(q,r)=>{const{name,email,text}=q.body;if(!name||!email||!text)return r.status(400).json({error:'Tüm alanlar gerekli'});db.prepare('INSERT INTO messages(name,email,text) VALUES(?,?,?)').run(name,email,text);r.json({ok:true})});
+app.get('/api/my-orders',needUser,(q,r)=>r.json(db.prepare('SELECT id,items,total,status,method,created FROM orders WHERE user_id=? ORDER BY id DESC').all(q.s.uid)));
+
+app.post('/api/order',needUser,(q,r)=>{const{items={},address={},method}=q.body;
+ if(!['card','cod','eft'].includes(method))return r.status(400).json({error:'Ödeme yöntemi seçin'});
+ if(!address.name||!address.phone||!address.city||!address.address)return r.status(400).json({error:'Teslimat bilgilerini doldurun'});
+ let total=0;const list=[];for(const[id,n]of Object.entries(items)){const p=db.prepare('SELECT * FROM products WHERE id=?').get(id),qty=Math.min(parseInt(n)||0,99);if(p&&qty>0){total+=p.price*qty;list.push({id:p.id,name:p.name,category:p.category,qty,price:p.price})}}
+ if(!list.length)return r.status(400).json({error:'Sepet boş'});
+ if(method==='card'&&!iyzi)return r.status(400).json({error:'Kart ödemesi henüz yapılandırılmadı (iyzico anahtarları gerekli)'});
+ const status={card:'Ödeme Bekliyor',eft:'Havale Bekleniyor',cod:'Hazırlanıyor'}[method];
+ const id=db.prepare('INSERT INTO orders(user_id,items,total,status,method,address) VALUES(?,?,?,?,?,?)').run(q.s.uid,JSON.stringify(list),total,status,method,JSON.stringify(address)).lastInsertRowid;
+ if(method!=='card')return r.json({ok:true,total,id,iban:method==='eft'?(E.IBAN||'IBAN bilgisi admin tarafından eklenmedi'):null});
+ const u=db.prepare('SELECT * FROM users WHERE id=?').get(q.s.uid),[fn,...ln]=address.name.trim().split(' '),ad={contactName:address.name,city:address.city,country:'Turkey',address:address.address};
+ iyzi.checkoutFormInitialize.create({locale:'tr',conversationId:String(id),price:total.toFixed(2),paidPrice:total.toFixed(2),currency:'TRY',basketId:String(id),paymentGroup:'PRODUCT',callbackUrl:BASE+'/api/pay/callback',enabledInstallments:[1],
+  buyer:{id:String(u.id),name:fn,surname:ln.join(' ')||fn,gsmNumber:address.phone,email:u.email,identityNumber:'11111111111',registrationAddress:address.address,ip:q.ip||'85.34.78.112',city:address.city,country:'Turkey'},
+  shippingAddress:ad,billingAddress:ad,basketItems:list.map(i=>({id:String(i.id),name:i.name,category1:i.category||'Genel',itemType:'PHYSICAL',price:(i.price*i.qty).toFixed(2)}))},
+ (err,res)=>{if(err||res.status!=='success'){db.prepare('UPDATE orders SET status=? WHERE id=?').run('İptal',id);return r.status(500).json({error:'Ödeme başlatılamadı: '+(res&&res.errorMessage||'')})}
+  db.prepare('UPDATE orders SET iyzi_token=? WHERE id=?').run(res.token,id);r.json({ok:true,url:res.paymentPageUrl})})});
+app.post('/api/pay/callback',(q,r)=>{const token=q.body.token,o=iyzi&&db.prepare('SELECT * FROM orders WHERE iyzi_token=? AND status=?').get(token,'Ödeme Bekliyor');
+ if(!o)return r.redirect('/siparislerim.html');
+ iyzi.checkoutForm.retrieve({locale:'tr',conversationId:String(o.id),token},(err,res)=>{
+  const ok=!err&&res.paymentStatus==='SUCCESS'&&String(res.basketId)===String(o.id)&&Math.abs(parseFloat(res.paidPrice)-o.total)<0.01;
+  db.prepare('UPDATE orders SET status=? WHERE id=?').run(ok?'Hazırlanıyor':'İptal',o.id);r.redirect('/siparislerim.html?'+(ok?'ok':'fail'))})});
+
+// Admin
+app.post('/api/admin/login',(q,r)=>{const k='a'+q.ip;if(limited(k))return r.status(429).json({error:'Çok fazla deneme, 15 dk bekleyin'});
+ if(q.body.user===ADMIN_USER&&q.body.pass===ADMIN_PASS){login(r,{admin:true,name:'Admin'});return r.json({ok:true})}fail(k);r.status(400).json({error:'Hatalı bilgi'})});
+app.post('/api/admin/upload',needAdmin,(q,r)=>{const m=/^data:image\/(png|jpeg|webp);base64,(.+)$/.exec(q.body.data||'');if(!m)return r.status(400).json({error:'Sadece png/jpg/webp'});
+ const f=crypto.randomBytes(8).toString('hex')+'.'+(m[1]=='jpeg'?'jpg':m[1]);fs.writeFileSync(path.join(UP,f),Buffer.from(m[2],'base64'));r.json({url:'/uploads/'+f})});
+app.post('/api/admin/products',needAdmin,(q,r)=>{const{name,category,price,image,description}=q.body;if(!name||!(price>0))return r.status(400).json({error:'Ad ve fiyat gerekli'});
+ db.prepare('INSERT INTO products(name,category,price,image,description) VALUES(?,?,?,?,?)').run(name,category||'Genel',price,image||'',description||'');r.json({ok:true})});
+app.delete('/api/admin/products/:id',needAdmin,(q,r)=>{db.prepare('DELETE FROM products WHERE id=?').run(q.params.id);r.json({ok:true})});
+app.post('/api/admin/posts',needAdmin,(q,r)=>{db.prepare('INSERT INTO posts(title,body) VALUES(?,?)').run(q.body.title,q.body.body);r.json({ok:true})});
+app.put('/api/admin/orders/:id',needAdmin,(q,r)=>{if(!STATUSES.includes(q.body.status))return r.status(400).json({error:'Geçersiz durum'});db.prepare('UPDATE orders SET status=? WHERE id=?').run(q.body.status,q.params.id);r.json({ok:true})});
+app.get('/api/admin/data',needAdmin,(q,r)=>r.json({statuses:STATUSES,orders:db.prepare('SELECT o.*,u.email FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC').all(),messages:db.prepare('SELECT * FROM messages ORDER BY id DESC').all()}));
+app.listen(3000,()=>console.log('Site: http://localhost:3000'));

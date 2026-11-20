@@ -1,0 +1,3 @@
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Blog</title><link rel="stylesheet" href="style.css"></head><body>
+<main><h1 class="reveal">Blog</h1><div id="p"></div></main><script src="app.js" onerror="document.body.innerHTML='<h2 style=padding:40px;color:#fff>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
+window.pageInit=async()=>{p.innerHTML=(await api('posts')).map(x=>`<div class="card reveal" style="margin-bottom:20px"><h2>${esc(x.title)}</h2><p>${esc(x.body)}</p></div>`).join('')}</script></body></html>

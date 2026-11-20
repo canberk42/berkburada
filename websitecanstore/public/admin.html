@@ -1,0 +1,22 @@
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin</title><link rel="stylesheet" href="style.css"></head><body>
+<main><div id="lg" class="box card"><h2>Admin Girişi</h2><input id="au" placeholder="Kullanıcı adı"><input id="aw" type="password" placeholder="Şifre"><button id="alogin">Giriş</button><p class="msg" id="am"></p></div>
+<div id="panel" style="display:none"><div class="tabs" id="atabs"><button data-s="sp">Ürünler</button><button data-s="sb">Blog</button><button data-s="sc">Siparişler & Mesajlar</button></div>
+<div id="sp"><div class="card"><h3>Ürün Ekle</h3><input id="pn" placeholder="Ürün adı"><input id="pc" placeholder="Kategori"><input id="pp" type="number" placeholder="Fiyat ₺"><label class="mut">Görsel yükle (png/jpg/webp):</label><input id="pf" type="file" accept="image/png,image/jpeg,image/webp"><input id="pi" placeholder="veya görsel URL"><textarea id="pd" placeholder="Açıklama"></textarea><button id="padd">Ekle</button> <span class="msg" id="pmsg"></span></div><h3 style="margin:24px 0">Mevcut Ürünler</h3><div id="plist"></div></div>
+<div id="sb" style="display:none" class="card"><h3>Blog Yazısı Ekle</h3><input id="bt" placeholder="Başlık"><textarea id="bb" rows="6" placeholder="Yazı"></textarea><button id="badd">Yayınla</button></div>
+<div id="sc" style="display:none"></div></div></main>
+<script src="app.js"></script><script>
+const S=['sp','sb','sc'];
+function sec(x){S.forEach(i=>$(i).style.display=i==x?'block':'none');if(x=='sc')data()}
+$('atabs').onclick=e=>e.target.dataset.s&&sec(e.target.dataset.s);
+$('alogin').onclick=async()=>{const r=await api('admin/login','POST',{user:$('au').value,pass:$('aw').value});r.ok?init():$('am').textContent=r.error};
+function init(){$('lg').style.display='none';$('panel').style.display='block';plist_()}
+async function plist_(){$('plist').innerHTML='<table>'+(await api('products')).map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.category)}</td><td>${p.price} ₺</td><td><button data-del="${p.id}">Sil</button></td></tr>`).join('')+'</table>'}
+$('plist').onclick=async e=>{const id=e.target.dataset.del;if(id&&confirm('Silinsin mi?')){await api('admin/products/'+id,'DELETE');plist_()}};
+$('pf').onchange=()=>{const f=$('pf').files[0];if(!f)return;const fr=new FileReader();fr.onload=async()=>{const r=await api('admin/upload','POST',{data:fr.result});if(r.url){$('pi').value=r.url;$('pmsg').textContent='Görsel yüklendi ✓'}else $('pmsg').textContent=r.error};fr.readAsDataURL(f)};
+$('padd').onclick=async()=>{const r=await api('admin/products','POST',{name:$('pn').value,category:$('pc').value,price:+$('pp').value,image:$('pi').value,description:$('pd').value});$('pmsg').textContent=r.ok?'Eklendi ✓':r.error;if(r.ok){['pn','pc','pp','pi','pd','pf'].forEach(i=>$(i).value='');plist_()}};
+$('badd').onclick=async()=>{await api('admin/posts','POST',{title:$('bt').value,body:$('bb').value});$('bt').value=$('bb').value='';alert('Yayınlandı')};
+async function data(){const d=await api('admin/data');
+ $('sc').innerHTML='<h3>Siparişler</h3><table>'+d.orders.map(o=>{const a=JSON.parse(o.address||'{}');return `<tr><td>#${o.id}<br>${esc(o.email)}</td><td>${JSON.parse(o.items).map(i=>esc(i.name)+'×'+i.qty).join(', ')}<br><small class="mut">${esc(a.name)} ${esc(a.phone)} ${esc(a.city)} ${esc(a.address)}</small></td><td>${o.total.toFixed(2)} ₺<br><small>${esc(o.method)}</small></td><td><select data-oid="${o.id}">${d.statuses.map(s=>`<option ${s==o.status?'selected':''}>${s}</option>`).join('')}</select></td></tr>`}).join('')+'</table><h3 style="margin-top:24px">Mesajlar</h3><table>'+d.messages.map(x=>`<tr><td>${esc(x.name)} (${esc(x.email)})</td><td>${esc(x.text)}</td></tr>`).join('')+'</table>'}
+$('sc').onchange=async e=>{if(e.target.dataset.oid)await api('admin/orders/'+e.target.dataset.oid,'PUT',{status:e.target.value})};
+api('me').then(x=>x.admin&&init());
+</script></body></html>

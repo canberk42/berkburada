@@ -1,0 +1,15 @@
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sepet</title><link rel="stylesheet" href="style.css"></head><body>
+<main><h1 class="reveal">Sepetim</h1><div id="cartbox"></div><div id="co" class="card" style="display:none;margin-top:24px"><h3>Teslimat ve Ödeme</h3>
+<input id="an" placeholder="Ad Soyad"><input id="ap" placeholder="Telefon (+905xxxxxxxxx)"><input id="ac" placeholder="Şehir"><textarea id="aa" rows="3" placeholder="Açık adres"></textarea>
+<select id="pm"><option value="card">Kredi/Banka Kartı (iyzico)</option><option value="eft">Havale / EFT</option><option value="cod">Kapıda Ödeme</option></select><button id="buy">Siparişi Tamamla</button></div><p class="msg" id="msg"></p></main>
+<script src="app.js"></script><script>
+let P=[];
+function draw(){const c=cart.get();let t=0;const rows=P.filter(p=>c[p.id]).map(p=>{t+=p.price*c[p.id];return `<tr><td>${esc(p.name)}</td><td>${c[p.id]} adet</td><td>${(p.price*c[p.id]).toFixed(2)} ₺</td><td><button data-rm="${p.id}">Sil</button></td></tr>`}).join('');
+ $('cartbox').innerHTML=rows?`<table>${rows}</table><h2>Toplam: ${t.toFixed(2)} ₺</h2>`:'<p class="mut">Sepetiniz boş.</p>';$('co').style.display=rows?'block':'none'}
+$('cartbox').onclick=e=>{const id=e.target.dataset.rm;if(id){const c=cart.get();delete c[id];cart.set(c);draw()}};
+$('buy').onclick=async()=>{const r=await api('order','POST',{items:cart.get(),method:$('pm').value,address:{name:$('an').value,phone:$('ap').value,city:$('ac').value,address:$('aa').value}});
+ if(r.error){$('msg').innerHTML=esc(r.error)+(r.error=='Giriş yapın'?' → <a href="giris.html" style="color:#fff">Giriş / Üye Ol</a>':'');return}
+ cart.clear();if(r.url){location.href=r.url;return}draw();$('co').style.display='none';
+ $('msg').textContent='Siparişiniz alındı (No: '+r.id+'). '+(r.iban?'Havale için IBAN: '+r.iban+' — açıklamaya sipariş numaranızı yazın.':'')}
+window.pageInit=async()=>{P=await api('products');draw()}
+</script></body></html>

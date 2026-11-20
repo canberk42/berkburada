@@ -1,0 +1,9 @@
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mağaza</title><link rel="stylesheet" href="style.css"></head><body>
+<main><h1 class="reveal">Mağaza</h1><div class="tabs" id="tabs"></div><div class="grid" id="list"></div></main>
+<script src="app.js" onerror="document.body.innerHTML='<h2 style=padding:40px;color:#fff>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
+let all=[];
+function show(cat){tabs.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.c==cat));
+ list.innerHTML=all.filter(p=>cat=='Tümü'||p.category==cat).map(p=>`<div class="card reveal"><img src="${esc(p.image)}" alt=""><h3>${esc(p.name)}</h3><p class="mut">${esc(p.description)}</p><p class="price">${p.price} ₺</p><button onclick="cart.add(${p.id});this.textContent='Eklendi ✓'">Sepete Ekle</button></div>`).join('')||'<p class="mut">Henüz ürün yok.</p>';reveal()}
+window.pageInit=async()=>{all=await api('products');const cats=['Tümü',...new Set(all.map(p=>p.category))];
+ tabs.innerHTML=cats.map(c=>`<button data-c="${esc(c)}">${esc(c)}</button>`).join('');tabs.onclick=e=>e.target.dataset.c&&show(e.target.dataset.c);show('Tümü')}
+</script></body></html>
