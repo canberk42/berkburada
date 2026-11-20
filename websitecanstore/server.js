@@ -39,6 +39,42 @@ async function d1Query(sql, params = []) {
 const d1All = async (sql, params = []) => (await d1Query(sql, params)).rows;
 const d1Get = async (sql, params = []) => (await d1Query(sql, params)).rows[0] || null;
 
+// ---- Otomatik Blog Metin Düzenleyici ----
+function formatInlineSpaces(str) {
+  return String(str || '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ ([.,!?:;])/g, '$1')
+    .replace(/([,!?;:])([^\s\n"'’”)\]])/g, '$1 $2')
+    .replace(/\.([^\s\n\d"'’”)\]])/g, '. $1')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+
+function formatBlogPost(rawTitle, rawBody) {
+  const title = formatInlineSpaces(rawTitle);
+  const normalizedLines = String(rawBody || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => formatInlineSpaces(line));
+
+  const paragraphs = [];
+  let buf = [];
+  for (const line of normalizedLines) {
+    if (!line) {
+      if (buf.length) {
+        paragraphs.push(buf.join(' '));
+        buf = [];
+      }
+    } else {
+      buf.push(line);
+    }
+  }
+  if (buf.length) paragraphs.push(buf.join(' '));
+
+  const body = paragraphs.join('\n\n');
+  return { title, body };
+}
+
 async function initDb() {
   const statements = [
     `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, name TEXT, pass TEXT, verified INTEGER DEFAULT 0, code TEXT, code_exp INTEGER)`,
@@ -237,8 +273,11 @@ app.delete('/api/admin/products/:id', needAdmin, async (q, r) => {
   catch (e) { console.error(e); r.status(500).json({ error: 'Ürün silinemedi' }) }
 });
 app.post('/api/admin/posts', needAdmin, async (q, r) => {
-  try { await d1Query('INSERT INTO posts(title,body) VALUES(?,?)', [q.body.title, q.body.body]); r.json({ ok: true }) }
-  catch (e) { console.error(e); r.status(500).json({ error: 'Yazı eklenemedi' }) }
+  try {
+    const { title, body } = formatBlogPost(q.body.title, q.body.body);
+    if (!title || !body) return r.status(400).json({ error: 'Başlık ve içerik gerekli' });
+    await d1Query('INSERT INTO posts(title,body) VALUES(?,?)', [title, body]); r.json({ ok: true, post: { title, body } })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Yazı eklenemedi' }) }
 });
 app.put('/api/admin/orders/:id', needAdmin, async (q, r) => {
   try {
