@@ -87,10 +87,6 @@ async function initDb() {
   for (const c of ['status TEXT', 'method TEXT', 'address TEXT', 'iyzi_token TEXT']) {
     try { await d1Query('ALTER TABLE orders ADD COLUMN ' + c); } catch {}
   }
-  const existingPost = await d1Get('SELECT id FROM posts LIMIT 1');
-  if (!existingPost) {
-    await d1Query('INSERT INTO posts(title,body) VALUES(?,?)', ['Hoş geldiniz', 'İlk blog yazımız. Admin panelinden yenilerini ekleyebilirsiniz.']);
-  }
   console.log('[DB] Cloudflare D1 bağlantısı hazır.');
 }
 
@@ -327,6 +323,17 @@ app.post('/api/admin/posts', needAdmin, async (q, r) => {
     if (!title || !body) return r.status(400).json({ error: 'Başlık ve içerik gerekli' });
     await d1Query('INSERT INTO posts(title,body) VALUES(?,?)', [title, body]); r.json({ ok: true, post: { title, body } })
   } catch (e) { console.error(e); r.status(500).json({ error: 'Yazı eklenemedi' }) }
+});
+app.delete('/api/admin/posts/:id', needAdmin, async (q, r) => {
+  try {
+    const postId = parseInt(q.params.id, 10);
+    if (!postId) return r.status(400).json({ error: 'Geçersiz yazı ID' });
+    await d1Query('DELETE FROM posts WHERE id=?', [postId]);
+    r.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    r.status(500).json({ error: 'Yazı silinemedi' });
+  }
 });
 app.put('/api/admin/orders/:id', needAdmin, async (q, r) => {
   try {
