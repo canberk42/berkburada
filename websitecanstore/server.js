@@ -1,7 +1,6 @@
 // Çalıştır: npm install && npm start  -> http://localhost:3000
 const express = require('express'), Database = require('better-sqlite3'), bcrypt = require('bcryptjs'), crypto = require('crypto'), fs = require('fs'), path = require('path');
 const E = process.env, ADMIN_USER = E.ADMIN_USER || 'admin', ADMIN_PASS = E.ADMIN_PASS || 'degistir123';
-// BASE_URL'e yanlışlıkla markdown ([url](url)) yapıştırılırsa temizle
 const BASE = ((E.BASE_URL || 'http://localhost:3000').match(/https?:\/\/[^\s)\]]+/) || ['http://localhost:3000'])[0].replace(/\/+$/, '');
 const PORT = +E.PORT || 3000, PROD = E.NODE_ENV === 'production' || !!E.RENDER;
 const db = new Database(path.join(__dirname, 'magaza.db'));
@@ -143,4 +142,15 @@ app.post('/api/admin/login', (q, r) => {
   if (q.body.user === ADMIN_USER && q.body.pass === ADMIN_PASS) { login(r, { admin: true, name: 'Admin' }); return r.json({ ok: true }) } fail(k); r.status(400).json({ error: 'Hatalı bilgi' })
 });
 app.post('/api/admin/upload', needAdmin, (q, r) => {
-  const m = /^data:image
+  const m = /^data:image\/(png|jpeg|webp);base64,(.+)$/.exec(q.body.data || ''); if (!m) return r.status(400).json({ error: 'Sadece png/jpg/webp' });
+  const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] == 'jpeg' ? 'jpg' : m[1]); fs.writeFileSync(path.join(UP, f), Buffer.from(m[2], 'base64')); r.json({ url: '/uploads/' + f })
+});
+app.post('/api/admin/products', needAdmin, (q, r) => {
+  const { name, category, price, image, description } = q.body; if (!name || !(price > 0)) return r.status(400).json({ error: 'Ad ve fiyat gerekli' });
+  db.prepare('INSERT INTO products(name,category,price,image,description) VALUES(?,?,?,?,?)').run(name, category || 'Genel', price, image || '', description || ''); r.json({ ok: true })
+});
+app.delete('/api/admin/products/:id', needAdmin, (q, r) => { db.prepare('DELETE FROM products WHERE id=?').run(q.params.id); r.json({ ok: true }) });
+app.post('/api/admin/posts', needAdmin, (q, r) => { db.prepare('INSERT INTO posts(title,body) VALUES(?,?)').run(q.body.title, q.body.body); r.json({ ok: true }) });
+app.put('/api/admin/orders/:id', needAdmin, (q, r) => { if (!STATUSES.includes(q.body.status)) return r.status(400).json({ error: 'Geçersiz durum' }); db.prepare('UPDATE orders SET status=? WHERE id=?').run(q.body.status, q.params.id); r.json({ ok: true }) });
+app.get('/api/admin/data', needAdmin, (q, r) => r.json({ statuses: STATUSES, orders: db.prepare('SELECT o.*,u.email FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC').all(), messages: db.prepare('SELECT * FROM messages ORDER BY id DESC').all() }));
+app.listen(PORT, () => console.log('Site: ' + BASE + ' (port ' + PORT + ')'));
