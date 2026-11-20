@@ -52,7 +52,7 @@ const limited = (k, max = 5, win = 15 * 60000) => { const n = Date.now(), a = (t
 const fail = k => { const a = tries.get(k) || []; a.push(Date.now()); tries.set(k, a) };
 const norm = e => String(e ?? '').trim().toLowerCase();
 const app = express();
-app.set('trust proxy', 1); // Render/proxy arkasında gerçek istemci IP'si
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '8mb' })); app.use(express.urlencoded({ extended: false })); app.use(express.static(path.join(__dirname, 'public')));
 const sess = q => { const t = (q.headers.cookie || '').match(/sid=([a-f0-9]+)/); return t && sessions.get(t[1]) };
 const login = (r, d) => { const id = crypto.randomBytes(24).toString('hex'); sessions.set(id, d); r.setHeader('Set-Cookie', `sid=${id}; HttpOnly; Path=/; SameSite=Lax${BASE.startsWith('https') ? '; Secure' : ''}`) };
@@ -67,7 +67,6 @@ const sendCode = async (email, subject) => {
   else if (PROD) throw new Error('RESEND_API_KEY ayarlı değil');
   else console.log(`[KOD] ${email}: ${code}`);
 };
-// Aynı e-postaya kısa sürede çok fazla kod gönderimini engelle
 const sendLimited = email => { const k = 's' + email; if (limited(k, 5)) return true; fail(k); return false };
 const checkCode = (email, code) => {
   const k = 'c' + email; if (limited(k)) return null; const u = getUser(email);
@@ -125,4 +124,23 @@ app.post('/api/order', needUser, (q, r) => {
     buyer: { id: String(u.id), name: fn, surname: ln.join(' ') || fn, gsmNumber: address.phone, email: u.email, identityNumber: '11111111111', registrationAddress: address.address, ip: q.ip || '85.34.78.112', city: address.city, country: 'Turkey' },
     shippingAddress: ad, billingAddress: ad, basketItems: list.map(i => ({ id: String(i.id), name: i.name, category1: i.category || 'Genel', itemType: 'PHYSICAL', price: (i.price * i.qty).toFixed(2) }))
   }, (err, res) => {
-    if (err || res.status !== 'success') { db.prepare('UPDATE orders SET status=? WHERE id=?').run('İptal', id); return r.status(500).json({ error: 'Ödeme başlatılamadı: ' + (res && res
+    if (err || res.status !== 'success') { db.prepare('UPDATE orders SET status=? WHERE id=?').run('İptal', id); return r.status(500).json({ error: 'Ödeme başlatılamadı: ' + (res && res.errorMessage || '') }) }
+    db.prepare('UPDATE orders SET iyzi_token=? WHERE id=?').run(res.token, id); r.json({ ok: true, url: res.paymentPageUrl })
+  })
+});
+app.post('/api/pay/callback', (q, r) => {
+  const token = q.body.token, o = iyzi && db.prepare('SELECT * FROM orders WHERE iyzi_token=? AND status=?').get(token, 'Ödeme Bekliyor');
+  if (!o) return r.redirect('/siparislerim.html');
+  iyzi.checkoutForm.retrieve({ locale: 'tr', conversationId: String(o.id), token }, (err, res) => {
+    const ok = !err && res.paymentStatus === 'SUCCESS' && String(res.basketId) === String(o.id) && Math.abs(parseFloat(res.paidPrice) - o.total) < 0.01;
+    db.prepare('UPDATE orders SET status=? WHERE id=?').run(ok ? 'Hazırlanıyor' : 'İptal', o.id); r.redirect('/siparislerim.html?' + (ok ? 'ok' : 'fail'))
+  })
+});
+
+// Admin
+app.post('/api/admin/login', (q, r) => {
+  const k = 'a' + q.ip; if (limited(k)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk bekleyin' });
+  if (q.body.user === ADMIN_USER && q.body.pass === ADMIN_PASS) { login(r, { admin: true, name: 'Admin' }); return r.json({ ok: true }) } fail(k); r.status(400).json({ error: 'Hatalı bilgi' })
+});
+app.post('/api/admin/upload', needAdmin, (q, r) => {
+  const m = /^data:image
