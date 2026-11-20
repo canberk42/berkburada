@@ -96,6 +96,40 @@ async function initDb() {
 
 const UP = path.join(__dirname, 'public', 'uploads'); fs.mkdirSync(UP, { recursive: true });
 
+// ---- Cloudinary Kalıcı Görsel Yükleme ----
+const CLD_CLOUD = clean(E.CLOUDINARY_CLOUD_NAME);
+const CLD_KEY = clean(E.CLOUDINARY_API_KEY);
+const CLD_SECRET = clean(E.CLOUDINARY_API_SECRET);
+const hasCloudinary = !!(CLD_CLOUD && CLD_KEY && CLD_SECRET);
+
+if (hasCloudinary) console.log(`[MEDIA] Cloudinary aktif (cloud: ${CLD_CLOUD})`);
+else console.warn('[MEDIA] Cloudinary ayarlı değil — yerel /uploads kullanılacak (deploy sonrası silinebilir).');
+
+async function uploadToCloudinary(dataUrl) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const folder = 'berkburada/products';
+  const toSign = `folder=${folder}&timestamp=${timestamp}${CLD_SECRET}`;
+  const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+
+  const form = new FormData();
+  form.append('file', dataUrl);
+  form.append('api_key', CLD_KEY);
+  form.append('timestamp', String(timestamp));
+  form.append('folder', folder);
+  form.append('signature', signature);
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLD_CLOUD}/image/upload`, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(20000)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.secure_url) {
+    throw new Error(data.error?.message || `Cloudinary yükleme hatası (${res.status})`);
+  }
+  return data.secure_url;
+}
+
 // ---- E-posta (Resend HTTPS API) ----
 const RESEND_API_KEY = clean(E.RESEND_API_KEY);
 const RESEND_FROM = clean(E.RESEND_FROM || E.SMTP_FROM) || 'Mağazam <noreply@berkburada.com>';
@@ -258,9 +292,22 @@ app.post('/api/admin/login', (q, r) => {
   const k = 'a' + q.ip; if (limited(k)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk bekleyin' });
   if (q.body.user === ADMIN_USER && q.body.pass === ADMIN_PASS) { login(r, { admin: true, name: 'Admin' }); return r.json({ ok: true }) } fail(k); r.status(400).json({ error: 'Hatalı bilgi' })
 });
-app.post('/api/admin/upload', needAdmin, (q, r) => {
-  const m = /^data:image\/(png|jpeg|webp);base64,(.+)$/.exec(q.body.data || ''); if (!m) return r.status(400).json({ error: 'Sadece png/jpg/webp' });
-  const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] == 'jpeg' ? 'jpg' : m[1]); fs.writeFileSync(path.join(UP, f), Buffer.from(m[2], 'base64')); r.json({ url: '/uploads/' + f })
+app.post('/api/admin/upload', needAdmin, async (q, r) => {
+  try {
+    const dataUrl = String(q.body.data || '');
+    const m = /^data:image\/(png|jpeg|webp);base64,(.+)$/.exec(dataUrl);
+    if (!m) return r.status(400).json({ error: 'Sadece png/jpg/webp' });
+    if (hasCloudinary) {
+      const url = await uploadToCloudinary(dataUrl);
+      return r.json({ url });
+    }
+    const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] == 'jpeg' ? 'jpg' : m[1]);
+    fs.writeFileSync(path.join(UP, f), Buffer.from(m[2], 'base64'));
+    r.json({ url: '/uploads/' + f });
+  } catch (e) {
+    console.error('[UPLOAD]', e.message);
+    r.status(500).json({ error: 'Görsel yüklenemedi: ' + e.message });
+  }
 });
 app.post('/api/admin/products', needAdmin, async (q, r) => {
   try {
