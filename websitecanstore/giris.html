@@ -1,0 +1,29 @@
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Giriş</title><link rel="stylesheet" href="style.css"><style>button:disabled{opacity:.5;cursor:not-allowed}button:disabled:hover{transform:none;box-shadow:none;background:var(--a)}#resend{background:#1d1d3a;margin-top:10px}</style></head><body>
+<main><div class="box card reveal"><div class="tabs"><button data-m="l" class="on">Giriş</button><button data-m="r">Üye Ol</button><button data-m="f">Şifremi Unuttum</button></div>
+<input id="fname" placeholder="Ad Soyad" style="display:none"><input id="femail" type="email" autocomplete="email" placeholder="E-posta"><input id="fpass" type="password" placeholder="Şifre (en az 6)">
+<input id="fcode" inputmode="numeric" maxlength="6" placeholder="E-postaya gelen 6 haneli kod" style="display:none"><button id="btn">Giriş Yap</button>
+<p class="mut" id="timer" style="display:none;margin-top:10px"></p><button id="resend" style="display:none">Kodu Tekrar Gönder</button><p class="msg" id="msg"></p></div></main>
+<script src="app.js"></script><script>
+let mode='l',step=0,tmr,exp=0,cool=0;
+const mail=()=>$('femail').value.trim().toLowerCase();
+function stopTimers(){clearInterval(tmr);$('timer').style.display=$('resend').style.display='none'}
+function startTimers(){exp=Date.now()+10*60000;cool=Date.now()+60000;$('timer').style.display=$('resend').style.display='block';clearInterval(tmr);tmr=setInterval(tick,1000);tick()}
+function tick(){const l=Math.ceil((exp-Date.now())/1000),c=Math.ceil((cool-Date.now())/1000);
+ $('timer').textContent=l>0?`Kodun geçerlilik süresi: ${Math.floor(l/60)}:${String(l%60).padStart(2,'0')}`:'Kodun süresi doldu. Lütfen yeni kod isteyin.';
+ $('resend').disabled=c>0;$('resend').textContent=c>0?`Kodu Tekrar Gönder (${c} sn)`:'Kodu Tekrar Gönder';
+ if(l<=0&&c<=0)clearInterval(tmr)}
+function setMode(x){mode=x;step=0;stopTimers();$('fname').style.display=x=='r'?'block':'none';$('fcode').style.display='none';$('fcode').value='';$('fpass').style.display=x=='f'?'none':'block';$('fpass').placeholder='Şifre (en az 6)';
+ $('btn').textContent={l:'Giriş Yap',r:'Kod Gönder',f:'Kod Gönder'}[x];$('msg').textContent='';document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.m==x))}
+document.querySelector('.tabs').onclick=e=>e.target.dataset.m&&setMode(e.target.dataset.m);
+function sent(msg){step=1;$('fcode').style.display='block';$('fcode').value='';$('fcode').focus();$('msg').textContent=msg;startTimers()}
+$('btn').onclick=async()=>{const email=mail(),pass=$('fpass').value,code=$('fcode').value.trim();let r;$('btn').disabled=true;
+ try{
+ if(mode=='l')r=await api('login','POST',{email,pass});
+ else if(mode=='r'){if(step==0){r=await api('register','POST',{name:$('fname').value.trim(),email,pass});if(r.ok){$('btn').textContent='Kodu Doğrula';sent('Kod e-postanıza gönderildi. Gelmediyse spam/gereksiz klasörüne bakın.');return}}else r=await api('verify','POST',{email,code})}
+ else{if(step==0){r=await api('forgot','POST',{email});if(r.ok){$('fpass').style.display='block';$('fpass').placeholder='Yeni şifre';$('btn').textContent='Şifreyi Değiştir';sent('Bu e-posta kayıtlıysa kod gönderildi. Gelmediyse spam klasörüne bakın.');return}}else r=await api('reset','POST',{email,code,pass})}
+ r.ok?location.href='magaza.html':$('msg').textContent=r.error||'Bir hata oluştu'
+ }catch{$('msg').textContent='Sunucuya ulaşılamadı, tekrar deneyin'}finally{$('btn').disabled=false}};
+$('resend').onclick=async()=>{$('resend').disabled=true;let r;
+ try{r=mode=='r'?await api('register','POST',{name:$('fname').value.trim(),email:mail(),pass:$('fpass').value}):await api('forgot','POST',{email:mail()})}catch{r={error:'Sunucuya ulaşılamadı'}}
+ if(r.ok){$('fcode').value='';$('msg').textContent='Yeni kod gönderildi. Eski kod artık geçersiz.';startTimers()}else{$('msg').textContent=r.error;cool=Date.now()+10000;clearInterval(tmr);tmr=setInterval(tick,1000)}};
+</script></body></html>
