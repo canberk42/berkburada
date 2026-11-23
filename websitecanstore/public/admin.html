@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin — berkburada</title><meta name="robots" content="noindex"><link rel="stylesheet" href="style.css"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script>
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin — berkburada</title><meta name="robots" content="noindex"><link rel="stylesheet" href="style.css?v=4"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script>
 <style>
 .pform{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
 .pform .full{grid-column:1/-1}
@@ -37,7 +37,7 @@
 </div>
 <div id="sb" style="display:none;max-width:560px" class="card"><h2>Blog yazısı ekle</h2><input id="bt" placeholder="Başlık"><textarea id="bb" rows="6" placeholder="Yazı"></textarea><button id="badd">Yayınla</button></div>
 <div id="sc" style="display:none"></div></div></main>
-<script src="app.js"></script><script>
+<script src="app.js?v=4"></script><script>
 const S=['sp','sb','sc'];let PRODUCTS=[],IMGS=[],EDIT=null;
 function sec(x){S.forEach(i=>$(i).style.display=i==x?'block':'none');document.querySelectorAll('#atabs button').forEach(b=>b.classList.toggle('on',b.dataset.s==x));if(x=='sc')data()}
 $('atabs').onclick=e=>e.target.dataset.s&&sec(e.target.dataset.s);

@@ -1,6 +1,6 @@
-<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Siparişlerim — berkburada</title><link rel="stylesheet" href="style.css"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script></head><body>
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Siparişlerim — berkburada</title><link rel="stylesheet" href="style.css?v=4"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script></head><body>
 <main><h1 class="reveal">Siparişlerim</h1><p class="msg" id="note" style="margin-bottom:16px"></p><div id="ol" style="display:grid;gap:12px;max-width:720px"></div></main>
-<script src="app.js"></script><script>
+<script src="app.js?v=4"></script><script>
 window.pageInit=async me=>{if(!me.user){ol.innerHTML='<p class="empty">Siparişlerini görmek için <a href="/giris">giriş yap</a></p>';return}
  const q=location.search;$('note').textContent=q=='?ok'?'Ödemen alındı, teşekkürler':q=='?fail'?'Ödeme tamamlanamadı, tekrar deneyebilirsin':'';
  const o=await api('my-orders');$('ol').innerHTML=o.map(x=>`<div class="card reveal"><div class="row"><b style="font-weight:500">Sipariş <span class="num">#${x.id}</span></b><span class="status ${statusCls(x.status)}">${esc(x.status)}</span></div><p style="margin-top:8px">${JSON.parse(x.items).map(i=>esc(i.name)+' × '+i.qty).join(', ')}</p><div class="row" style="margin-top:12px"><span class="meta num">${esc(x.created)}</span><span class="price">${money(x.total)}</span></div></div>`).join('')||'<p class="empty">Henüz siparişin yok</p>'}

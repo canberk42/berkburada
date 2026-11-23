@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>berkburada — oyuncu parmaklığı ve web sitesi</title><meta name="description" content="Mobil oyuncular için parmaklık, işletmeler için web sitesi. Kartla, havaleyle veya kapıda öde."><link rel="stylesheet" href="style.css"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script></head><body>
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>berkburada — oyuncu parmaklığı ve web sitesi</title><meta name="description" content="Mobil oyuncular için parmaklık, işletmeler için web sitesi. Kartla, havaleyle veya kapıda öde."><link rel="stylesheet" href="style.css?v=4"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script></head><body>
 <main>
 <section class="banner reveal">
   <div>
@@ -18,7 +18,7 @@
   <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><div><h3>Doğrudan iletişim</h3><p>İletişim sayfasından yazdığın mesaj doğrudan Berk'e gelir.</p></div></div>
 </section>
 </main>
-<script src="app.js" onerror="document.body.innerHTML='<h2 style=padding:40px>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
+<script src="app.js?v=4" onerror="document.body.innerHTML='<h2 style=padding:40px>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
 window.pageInit=async()=>{
  const all=normProducts(await api('products').catch(()=>[]));
  const withImg=all.filter(p=>p.images.length).slice(0,3);

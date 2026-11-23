@@ -1,6 +1,6 @@
-<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mağaza — berkburada</title><link rel="stylesheet" href="style.css"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script></head><body>
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mağaza — berkburada</title><link rel="stylesheet" href="style.css?v=4"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script></head><body>
 <main><div class="shophead"><h1 id="title">Mağaza</h1><span class="meta" id="count"></span></div><div class="tabs" id="tabs"></div><div class="grid" id="list"></div></main>
-<script src="app.js" onerror="document.body.innerHTML='<h2 style=padding:40px>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
+<script src="app.js?v=4" onerror="document.body.innerHTML='<h2 style=padding:40px>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
 let all=[],cat='Tümü';
 const sp=new URLSearchParams(location.search),q=(sp.get('q')||'').trim();
 const low=s=>String(s).toLocaleLowerCase('tr-TR');
