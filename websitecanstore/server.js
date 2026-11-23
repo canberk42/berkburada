@@ -268,7 +268,7 @@ app.post('/api/order', needUser, async (q, r) => {
     const status = { card: 'Ödeme Bekliyor', eft: 'Havale Bekleniyor', cod: 'Hazırlanıyor' }[method];
     const ins = await d1Query('INSERT INTO orders(user_id,items,total,status,method,address) VALUES(?,?,?,?,?,?)', [q.s.uid, JSON.stringify(list), total, status, method, JSON.stringify(address)]);
     const id = ins.meta?.last_row_id;
-    if (method !== 'card') return r.json({ ok: true, total, id, iban: method === 'eft' ? (E.IBAN || 'IBAN bilgisi admin tarafından eklenmedi') : null });
+    if (method !== 'card') return r.json({ ok: true, total, id, iban: method === 'eft' ? (E.IBAN || 'TR720006701000000016171030') : null });
     const u = await d1Get('SELECT * FROM users WHERE id=?', [q.s.uid]), [fn, ...ln] = address.name.trim().split(' '), ad = { contactName: address.name, city: address.city, country: 'Turkey', address: address.address };
     iyzi.checkoutFormInitialize.create({
       locale: 'tr', conversationId: String(id), price: total.toFixed(2), paidPrice: total.toFixed(2), currency: 'TRY', basketId: String(id), paymentGroup: 'PRODUCT', callbackUrl: BASE + '/api/pay/callback', enabledInstallments: [1],
