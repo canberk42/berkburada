@@ -1,19 +1,81 @@
-<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin — berkburada</title><link rel="stylesheet" href="style.css"></head><body>
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin — berkburada</title><meta name="robots" content="noindex"><link rel="stylesheet" href="style.css"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script>
+<style>
+.pform{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+.pform .full{grid-column:1/-1}
+.imgs{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 12px}
+.imgs .it{position:relative;width:96px;height:96px;border-radius:10px;overflow:hidden;background:var(--raised);box-shadow:inset 0 0 0 1px var(--line)}
+.imgs .it img{width:100%;height:100%;object-fit:cover;display:block}
+.imgs .it .ctl{position:absolute;inset:auto 4px 4px;display:flex;justify-content:space-between}
+.imgs .it .ctl button{width:26px;height:26px;padding:0;border-radius:6px;background:rgba(255,255,255,.95);color:var(--tx);font-size:14px;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.imgs .it .ctl button:hover{color:var(--a)}
+.imgs .it .first{position:absolute;left:4px;top:4px;height:20px;padding:0 6px;border-radius:5px;background:var(--a);color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center}
+.imgs .drop{width:96px;height:96px;border-radius:10px;border:1.5px dashed var(--line-strong);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:12px;color:var(--tx2);cursor:pointer;text-align:center;padding:8px}
+.imgs .drop:hover{border-color:var(--a);color:var(--a)}
+.imgs .drop svg{width:22px;height:22px}
+.urlrow{display:flex;gap:8px}.urlrow input{margin:0}
+.formacts{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
+@media (max-width:700px){.pform{grid-template-columns:1fr}}
+</style></head><body>
 <main><div id="lg" class="box card"><h2>Admin girişi</h2><input id="au" placeholder="Kullanıcı adı" autocomplete="username"><input id="aw" type="password" placeholder="Şifre" autocomplete="current-password"><button id="alogin" style="width:100%">Giriş</button><p class="msg" id="am"></p></div>
 <div id="panel" style="display:none"><h1>Yönetim</h1><div class="tabs" id="atabs"><button data-s="sp" class="on">Ürünler</button><button data-s="sb">Blog</button><button data-s="sc">Siparişler ve mesajlar</button></div>
-<div id="sp"><div class="card" style="max-width:560px"><h2>Ürün ekle</h2><input id="pn" placeholder="Ürün adı"><input id="pc" placeholder="Kategori"><input id="pp" type="number" placeholder="Fiyat (₺)"><label for="pf">Görsel yükle (png, jpg, webp)</label><input id="pf" type="file" accept="image/png,image/jpeg,image/webp"><input id="pi" placeholder="veya görsel URL"><textarea id="pd" rows="3" placeholder="Açıklama"></textarea><div class="row" style="justify-content:flex-start"><button id="padd">Ekle</button><span class="msg" id="pmsg" style="margin:0"></span></div></div><h2 style="margin:32px 0 12px">Mevcut ürünler</h2><div id="plist"></div></div>
+<div id="sp">
+ <div class="card" style="max-width:760px" id="pformcard"><h2 id="ftitle">Ürün ekle</h2>
+  <div class="pform">
+   <div class="full"><label for="pn">Ürün adı</label><input id="pn"></div>
+   <div><label for="pc">Kategori</label><input id="pc" list="catlist" placeholder="Örn: Gaming"><datalist id="catlist"></datalist></div>
+   <div><label for="pp">Fiyat (₺)</label><input id="pp" type="number" min="0" step="0.01"></div>
+   <div class="full"><label>Resimler <span class="meta">— ilk resim kapak olur, en fazla 10</span></label>
+    <div class="imgs" id="imgs"></div>
+    <input id="pf" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+    <div class="urlrow"><input id="pi" placeholder="veya resim adresi yapıştır (https://…)"><button class="ghost" id="piadd" type="button">Ekle</button></div>
+   </div>
+   <div class="full" style="margin-top:12px"><label for="pd">Açıklama</label><textarea id="pd" rows="5"></textarea></div>
+  </div>
+  <div class="formacts"><button id="psave">Ürünü ekle</button><button class="ghost" id="pcancel" style="display:none">Vazgeç</button><span class="msg" id="pmsg" style="margin:0"></span></div>
+ </div>
+ <h2 style="margin:32px 0 12px">Mevcut ürünler</h2><div id="plist"></div>
+</div>
 <div id="sb" style="display:none;max-width:560px" class="card"><h2>Blog yazısı ekle</h2><input id="bt" placeholder="Başlık"><textarea id="bb" rows="6" placeholder="Yazı"></textarea><button id="badd">Yayınla</button></div>
 <div id="sc" style="display:none"></div></div></main>
 <script src="app.js"></script><script>
-const S=['sp','sb','sc'];
+const S=['sp','sb','sc'];let PRODUCTS=[],IMGS=[],EDIT=null;
 function sec(x){S.forEach(i=>$(i).style.display=i==x?'block':'none');document.querySelectorAll('#atabs button').forEach(b=>b.classList.toggle('on',b.dataset.s==x));if(x=='sc')data()}
 $('atabs').onclick=e=>e.target.dataset.s&&sec(e.target.dataset.s);
 $('alogin').onclick=async()=>{const r=await api('admin/login','POST',{user:$('au').value,pass:$('aw').value});r.ok?init():$('am').textContent=r.error};
-function init(){$('lg').style.display='none';$('panel').style.display='block';plist_()}
-async function plist_(){$('plist').innerHTML='<div class="tablewrap"><table>'+(await api('products')).map(p=>`<tr><td>${esc(p.name)}</td><td class="mut">${esc(p.category)}</td><td class="r price">${money(p.price)}</td><td class="r"><button class="sm" data-del="${p.id}">Sil</button></td></tr>`).join('')+'</table></div>'}
-$('plist').onclick=async e=>{const id=e.target.dataset.del;if(id&&confirm('Silinsin mi?')){await api('admin/products/'+id,'DELETE');plist_()}};
-$('pf').onchange=()=>{const f=$('pf').files[0];if(!f)return;const fr=new FileReader();fr.onload=async()=>{const r=await api('admin/upload','POST',{data:fr.result});if(r.url){$('pi').value=r.url;$('pmsg').textContent='Görsel yüklendi'}else $('pmsg').textContent=r.error};fr.readAsDataURL(f)};
-$('padd').onclick=async()=>{const r=await api('admin/products','POST',{name:$('pn').value,category:$('pc').value,price:+$('pp').value,image:$('pi').value,description:$('pd').value});$('pmsg').textContent=r.ok?'Eklendi':r.error;if(r.ok){['pn','pc','pp','pi','pd','pf'].forEach(i=>$(i).value='');plist_()}};
+function init(){$('lg').style.display='none';$('panel').style.display='block';plist_();drawImgs()}
+
+// ---- Resim yöneticisi ----
+function drawImgs(){
+ $('imgs').innerHTML=IMGS.map((u,i)=>`<div class="it">${i?'':'<span class="first">Kapak</span>'}<img src="${esc(u)}" alt=""><div class="ctl"><button data-l="${i}" title="Öne al" ${i?'':'disabled style="visibility:hidden"'}>‹</button><button data-d="${i}" title="Kaldır">×</button></div></div>`).join('')+
+  (IMGS.length<10?`<label class="drop" for="pf">${icon('img')}Resim yükle</label>`:'');
+}
+$('imgs').onclick=e=>{const l=e.target.dataset.l,d=e.target.dataset.d;
+ if(l){const i=+l;[IMGS[i-1],IMGS[i]]=[IMGS[i],IMGS[i-1]];drawImgs()}
+ if(d!==undefined){IMGS.splice(+d,1);drawImgs()}};
+const readFile=f=>new Promise((ok,no)=>{const fr=new FileReader();fr.onload=()=>ok(fr.result);fr.onerror=no;fr.readAsDataURL(f)});
+$('pf').onchange=async()=>{const files=[...$('pf').files].slice(0,10-IMGS.length);$('pf').value='';
+ for(let k=0;k<files.length;k++){$('pmsg').textContent=`Resim yükleniyor ${k+1} / ${files.length}…`;
+  const r=await api('admin/upload','POST',{data:await readFile(files[k])}).catch(()=>({error:'Yüklenemedi'}));
+  if(r.url){IMGS.push(r.url);drawImgs()}else{$('pmsg').textContent=r.error;return}}
+ $('pmsg').textContent=files.length?files.length+' resim yüklendi':''};
+$('piadd').onclick=()=>{const u=$('pi').value.trim();if(!/^https:\/\//.test(u)){$('pmsg').textContent='Adres https:// ile başlamalı';return}if(IMGS.length<10){IMGS.push(u);$('pi').value='';drawImgs()}};
+
+// ---- Ekle / düzenle ----
+function resetForm(){EDIT=null;IMGS=[];['pn','pc','pp','pi','pd'].forEach(i=>$(i).value='');$('ftitle').textContent='Ürün ekle';$('psave').textContent='Ürünü ekle';$('pcancel').style.display='none';drawImgs()}
+function editProduct(p){EDIT=p.id;IMGS=[...p.images];$('pn').value=p.name;$('pc').value=p.category;$('pp').value=p.price;$('pd').value=p.description||'';
+ $('ftitle').textContent='Ürünü düzenle';$('psave').textContent='Değişiklikleri kaydet';$('pcancel').style.display='';$('pmsg').textContent='';drawImgs();$('pformcard').scrollIntoView({behavior:'smooth',block:'start'})}
+$('pcancel').onclick=()=>{resetForm();$('pmsg').textContent=''};
+$('psave').onclick=async()=>{const body={name:$('pn').value,category:$('pc').value,price:+$('pp').value,images:IMGS,description:$('pd').value};
+ const r=EDIT?await api('admin/products/'+EDIT,'PUT',body):await api('admin/products','POST',body);
+ if(!r.ok){$('pmsg').textContent=r.error;return}$('pmsg').textContent=EDIT?'Kaydedildi':'Eklendi';resetForm();plist_()};
+
+async function plist_(){PRODUCTS=normProducts(await api('products'));
+ $('catlist').innerHTML=[...new Set(PRODUCTS.map(p=>p.category))].map(c=>`<option value="${esc(c)}">`).join('');
+ $('plist').innerHTML='<div class="tablewrap"><table>'+PRODUCTS.map(p=>`<tr><td style="width:64px">${p.images[0]?`<img class="thumb" src="${esc(p.images[0])}" alt="">`:''}</td><td><b style="font-weight:500">${esc(p.name)}</b><br><small>${esc(p.category)} · ${p.images.length} resim</small></td><td class="r price">${money(p.price)}</td><td class="r"><button class="ghost" style="height:32px;font-size:13px" data-edit="${p.id}">Düzenle</button> <button class="sm" data-del="${p.id}">Sil</button></td></tr>`).join('')+'</table></div>'}
+$('plist').onclick=async e=>{const ed=e.target.dataset.edit,id=e.target.dataset.del;
+ if(ed)return editProduct(PRODUCTS.find(p=>String(p.id)===ed));
+ if(id&&confirm('Bu ürün silinsin mi?')){await api('admin/products/'+id,'DELETE');if(String(EDIT)===id)resetForm();plist_()}};
+
 $('badd').onclick=async()=>{await api('admin/posts','POST',{title:$('bt').value,body:$('bb').value});$('bt').value=$('bb').value='';alert('Yayınlandı')};
 async function data(){const d=await api('admin/data');
  $('sc').innerHTML='<h2>Siparişler</h2><div class="tablewrap"><table>'+d.orders.map(o=>{const a=JSON.parse(o.address||'{}');return `<tr><td><span class="num">#${o.id}</span><br><small>${esc(o.email)}</small></td><td>${JSON.parse(o.items).map(i=>esc(i.name)+' × '+i.qty).join(', ')}<br><small>${esc(a.name)} ${esc(a.phone)} ${esc(a.city)} ${esc(a.address)}</small></td><td class="r"><span class="price">${money(o.total)}</span><br><small>${esc(o.method)}</small></td><td><span class="status ${statusCls(o.status)}" style="margin-bottom:8px">${esc(o.status)}</span><br><select data-oid="${o.id}">${d.statuses.map(s=>`<option ${s==o.status?'selected':''}>${s}</option>`).join('')}</select></td></tr>`}).join('')+'</table></div><h2 style="margin-top:32px">Mesajlar</h2><div class="tablewrap"><table>'+d.messages.map(x=>`<tr><td>${esc(x.name)}<br><small>${esc(x.email)}</small></td><td>${esc(x.text)}</td></tr>`).join('')+'</table></div>'}

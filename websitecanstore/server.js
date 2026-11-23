@@ -89,6 +89,8 @@ async function initDb() {
   for (const c of ['status TEXT', 'method TEXT', 'address TEXT', 'iyzi_token TEXT']) {
     try { await d1Query('ALTER TABLE orders ADD COLUMN ' + c); } catch {}
   }
+  // Çoklu ürün resmi: JSON dizi olarak saklanır (sadece sütun eklenir, veri değişmez)
+  try { await d1Query('ALTER TABLE products ADD COLUMN images TEXT'); } catch {}
   console.log('[DB] Cloudflare D1 bağlantısı hazır.');
 }
 
@@ -224,6 +226,8 @@ setInterval(() => {
 }, 10 * 60000).unref();
 const safeEq = (a, b) => crypto.timingSafeEqual(crypto.createHash('sha256').update(String(a ?? '')).digest(), crypto.createHash('sha256').update(String(b ?? '')).digest());
 const str = (v, max) => String(v ?? '').trim().slice(0, max);
+// Ürünün resim listesi: yeni "images" sütunu, yoksa eski tek "image"
+const withImages = p => { let a = []; try { a = JSON.parse(p.images || '[]') } catch {} if (!Array.isArray(a) || !a.length) a = p.image ? [p.image] : []; return { ...p, category: String(p.category || 'Genel').trim(), images: a } };
 const okEmail = e => e.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 const needUser = (q, r, n) => { const s = sess(q); if (!s || !s.uid) return r.status(401).json({ error: 'Giriş yapın' }); q.s = s; n() };
 const needAdmin = (q, r, n) => { const s = sess(q); if (!s || !s.admin) return r.status(403).json({ error: 'Yetkisiz' }); n() };
@@ -291,7 +295,7 @@ app.post('/api/reset', async (q, r) => {
 app.post('/api/logout', (q, r) => { const id = sid(q); if (id) sessions.delete(id); r.setHeader('Set-Cookie', cookie('', 0)); r.json({ ok: true }) });
 app.get('/api/me', (q, r) => { const s = sess(q); r.json(s ? { name: s.name, admin: !!s.admin, user: !!s.uid } : {}) });
 app.get('/api/products', async (q, r) => {
-  try { r.json(await d1All('SELECT * FROM products ORDER BY id DESC')) }
+  try { r.json((await d1All('SELECT * FROM products ORDER BY id DESC')).map(withImages)) }
   catch (e) { console.error(e); r.status(500).json({ error: 'Ürünler yüklenemedi' }) }
 });
 app.get('/api/posts', async (q, r) => {
@@ -379,13 +383,27 @@ app.post('/api/admin/upload', needAdmin, async (q, r) => {
     r.status(500).json({ error: 'Görsel yüklenemedi: ' + e.message });
   }
 });
+// Ürün formunu doğrula: ad, kategori, fiyat, açıklama ve en fazla 10 resim
+function productInput(b) {
+  const name = str(b.name, 120), category = str(b.category, 60) || 'Genel', price = Number(b.price), description = str(b.description, 3000);
+  let images = Array.isArray(b.images) ? b.images : (b.image ? [b.image] : []);
+  images = images.map(u => str(u, 500)).filter(Boolean).slice(0, 10);
+  if (!name || !(price > 0) || price > 1e7) return { error: 'Ad ve fiyat gerekli' };
+  if (images.some(u => !/^(https:\/\/|\/uploads\/)/.test(u))) return { error: 'Görsel adresleri https:// ile başlamalı' };
+  return { name, category, price, description, images };
+}
 app.post('/api/admin/products', needAdmin, async (q, r) => {
   try {
-    const name = str(q.body.name, 120), category = str(q.body.category, 60) || 'Genel', price = Number(q.body.price), image = str(q.body.image, 500), description = str(q.body.description, 3000);
-    if (!name || !(price > 0) || price > 1e7) return r.status(400).json({ error: 'Ad ve fiyat gerekli' });
-    if (image && !/^(https:\/\/|\/uploads\/)/.test(image)) return r.status(400).json({ error: 'Görsel adresi https:// ile başlamalı' });
-    await d1Query('INSERT INTO products(name,category,price,image,description) VALUES(?,?,?,?,?)', [name, category, price, image, description]); r.json({ ok: true })
+    const p = productInput(q.body); if (p.error) return r.status(400).json({ error: p.error });
+    await d1Query('INSERT INTO products(name,category,price,image,images,description) VALUES(?,?,?,?,?,?)', [p.name, p.category, p.price, p.images[0] || '', JSON.stringify(p.images), p.description]); r.json({ ok: true })
   } catch (e) { console.error(e); r.status(500).json({ error: 'Ürün eklenemedi' }) }
+});
+app.put('/api/admin/products/:id', needAdmin, async (q, r) => {
+  try {
+    const id = parseInt(q.params.id, 10); if (!id) return r.status(400).json({ error: 'Geçersiz ürün' });
+    const p = productInput(q.body); if (p.error) return r.status(400).json({ error: p.error });
+    await d1Query('UPDATE products SET name=?,category=?,price=?,image=?,images=?,description=? WHERE id=?', [p.name, p.category, p.price, p.images[0] || '', JSON.stringify(p.images), p.description, id]); r.json({ ok: true })
+  } catch (e) { console.error(e); r.status(500).json({ error: 'Ürün güncellenemedi' }) }
 });
 app.delete('/api/admin/products/:id', needAdmin, async (q, r) => {
   try { await d1Query('DELETE FROM products WHERE id=?', [q.params.id]); r.json({ ok: true }) }

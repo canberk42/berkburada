@@ -1,30 +1,29 @@
-<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>berkburada — oyuncu parmaklığı ve web sitesi</title><link rel="stylesheet" href="style.css"></head><body>
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>berkburada — oyuncu parmaklığı ve web sitesi</title><meta name="description" content="Mobil oyuncular için parmaklık, işletmeler için web sitesi. Kartla, havaleyle veya kapıda öde."><link rel="stylesheet" href="style.css"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script></head><body>
 <main>
-<section class="hero">
-  <div class="reveal">
-    <h1>Mobil oyuncuya parmaklık, <span>işletmene web sitesi</span></h1>
+<section class="banner reveal">
+  <div>
+    <h1>Mobil oyuncuya parmaklık, <em>işletmene web sitesi</em></h1>
     <p class="sub">Ürünü sepete ekle, kartla, havaleyle ya da kapıda öde. Siparişin hazırlanırken her adımını hesabından takip et.</p>
-    <div class="acts"><a class="btn big" href="/magaza">Mağazaya git</a><a class="btn big ghost" href="/iletisim">Soru sor</a></div>
+    <div class="acts"><a class="btn big" href="/magaza">Alışverişe başla</a><a class="btn big ghost" href="/iletisim">Soru sor</a></div>
   </div>
-  <div class="slip reveal" aria-label="Örnek sipariş">
-    <div class="head"><b>Sipariş <span class="num">#1042</span></b><span class="status s-prep">Hazırlanıyor</span></div>
-    <div class="item">
-      <span class="thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="10" y1="11" y2="11"/><line x1="8" x2="8" y1="9" y2="13"/><line x1="15" x2="15.01" y1="12" y2="12"/><line x1="18" x2="18.01" y1="10" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg></span>
-      <div>Oyuncu parmaklığı<small>Gaming · 2 adet</small></div><span class="price">50,00 ₺</span>
-    </div>
-    <div class="item">
-      <span class="thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg></span>
-      <div>Basic web site<small>Web site · dosyalar teslim edilir</small></div><span class="price">1.500,00 ₺</span>
-    </div>
-    <div class="sum"><span class="mut">Toplam</span><span class="price">1.550,00 ₺</span></div>
-    <div class="track"><i class="on"></i><i class="on"></i><i></i><i></i></div>
-    <div class="track-l"><span class="on">Ödendi</span><span class="on">Hazırlanıyor</span><span>Kargoda</span><span>Teslim</span></div>
-  </div>
+  <div class="collage" id="collage" aria-label="Öne çıkan ürünler"></div>
 </section>
-<section class="why reveal">
-  <div><h3>Siparişin görünür</h3><p>Ödemeden teslimata kadar durum Siparişlerim sayfasında güncellenir.</p></div>
-  <div><h3>Doğrulanmış üyelik</h3><p>Hesaplar e-postana gelen 6 haneli kodla açılır.</p></div>
-  <div><h3>Doğrudan iletişim</h3><p>İletişim sayfasından yazdığın mesaj doğrudan Berk'e gelir.</p></div>
+
+<div class="sect"><h2>Öne çıkan ürünler</h2><a href="/magaza">Tümünü gör</a></div>
+<div class="grid" id="feat"></div>
+
+<section class="perkbar reveal">
+  <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg><div><h3>Üç ödeme yolu</h3><p>Kredi kartı, havale / EFT ya da kapıda ödeme.</p></div></div>
+  <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg><div><h3>Siparişin görünür</h3><p>Ödemeden teslimata kadar durum Siparişlerim sayfasında güncellenir.</p></div></div>
+  <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg><div><h3>Doğrudan iletişim</h3><p>İletişim sayfasından yazdığın mesaj doğrudan Berk'e gelir.</p></div></div>
 </section>
 </main>
-<script src="app.js" onerror="document.body.innerHTML='<h2 style=padding:40px;color:#fff>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script></body></html>
+<script src="app.js" onerror="document.body.innerHTML='<h2 style=padding:40px>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
+window.pageInit=async()=>{
+ const all=normProducts(await api('products').catch(()=>[]));
+ const withImg=all.filter(p=>p.images.length).slice(0,3);
+ $('collage').innerHTML=withImg.map(p=>`<a href="/magaza?urun=${p.id}" aria-label="${esc(p.name)}"><img src="${esc(p.images[0])}" alt="${esc(p.name)}"></a>`).join('');
+ if(!withImg.length)$('collage').style.display='none';
+ $('feat').innerHTML=all.slice(0,8).map(productCard).join('')||'<p class="empty">Henüz ürün yok</p>';
+ bindCards($('feat'),all);openFromUrl(all)}
+</script></body></html>

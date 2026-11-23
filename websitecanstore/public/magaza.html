@@ -1,9 +1,17 @@
-<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mağaza — berkburada</title><link rel="stylesheet" href="style.css"></head><body>
-<main><h1 class="reveal">Mağaza</h1><div class="tabs" id="tabs"></div><div class="grid" id="list"></div></main>
-<script src="app.js" onerror="document.body.innerHTML='<h2 style=padding:40px;color:#fff>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
-let all=[];
-function show(cat){tabs.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.c==cat));
- list.innerHTML=all.filter(p=>cat=='Tümü'||p.category==cat).map(p=>`<div class="card stack reveal">${p.image?`<img src="${esc(p.image)}" alt="">`:''}<h3>${esc(p.name)}</h3><p class="desc">${esc(p.description)}</p><div class="push"><span class="price">${money(p.price)}</span><button onclick="cart.add(${p.id});this.textContent='Sepette';this.className='done'">Sepete ekle</button></div></div>`).join('')||'<p class="empty">Henüz ürün yok</p>';reveal()}
-window.pageInit=async()=>{all=(await api('products')).map(p=>({...p,category:String(p.category||'Genel').trim()}));const cats=['Tümü',...new Set(all.map(p=>p.category))];
- tabs.innerHTML=cats.map(c=>`<button data-c="${esc(c)}">${esc(c)}</button>`).join('');tabs.onclick=e=>e.target.dataset.c&&show(e.target.dataset.c);show('Tümü')}
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mağaza — berkburada</title><link rel="stylesheet" href="style.css"><script>try{if(localStorage.theme==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script></head><body>
+<main><div class="shophead"><h1 id="title">Mağaza</h1><span class="meta" id="count"></span></div><div class="tabs" id="tabs"></div><div class="grid" id="list"></div></main>
+<script src="app.js" onerror="document.body.innerHTML='<h2 style=padding:40px>app.js yüklenemedi. Siteyi http://localhost:3000 üzerinden açın.</h2>'"></script><script>
+let all=[],cat='Tümü';
+const sp=new URLSearchParams(location.search),q=(sp.get('q')||'').trim();
+const low=s=>String(s).toLocaleLowerCase('tr-TR');
+function show(c){cat=c;tabs.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.c==c));
+ const ql=low(q),items=all.filter(p=>(c=='Tümü'||p.category==c)&&(!ql||low(p.name+' '+p.description+' '+p.category).includes(ql)));
+ $('count').textContent=items.length+' ürün';
+ list.innerHTML=items.map(productCard).join('')||`<p class="empty">${q?'“'+esc(q)+'” için ürün bulunamadı. <a href="/magaza">Tüm ürünler</a>':'Henüz ürün yok'}</p>`;reveal()}
+window.pageInit=async()=>{all=normProducts(await api('products').catch(()=>[]));
+ if(q)$('title').textContent='“'+q+'” için sonuçlar';
+ const cats=['Tümü',...new Set(all.map(p=>p.category))];
+ tabs.innerHTML=cats.map(c=>`<button data-c="${esc(c)}">${esc(c)}</button>`).join('');
+ tabs.onclick=e=>e.target.dataset.c&&show(e.target.dataset.c);
+ bindCards(list,all);show(cats.includes(sp.get('kategori'))?sp.get('kategori'):'Tümü');openFromUrl(all)}
 </script></body></html>
