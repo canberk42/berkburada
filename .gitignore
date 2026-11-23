@@ -1,0 +1,11 @@
+# Gizli anahtarlar asla GitHub'a gitmesin
+.env
+.env.*
+!.env.example
+
+# Bağımlılıklar ve yerel dosyalar
+node_modules/
+websitecanstore/public/uploads/
+*.db
+*.log
+.claude/

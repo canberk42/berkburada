@@ -1,6 +1,8 @@
 // Çalıştır: npm install && npm start  -> http://localhost:3000
 const express = require('express'), bcrypt = require('bcryptjs'), crypto = require('crypto'), fs = require('fs'), path = require('path');
-const E = process.env, ADMIN_USER = E.ADMIN_USER || 'admin', ADMIN_PASS = E.ADMIN_PASS || 'degistir123';
+// Varsayılan admin şifresi yok: ADMIN_PASS ayarlı değilse admin girişi kapalı kalır.
+const E = process.env, ADMIN_USER = E.ADMIN_USER || 'admin', ADMIN_PASS = E.ADMIN_PASS || '';
+if (!ADMIN_PASS) console.warn('[ADMIN] ADMIN_PASS ayarlı değil — admin girişi kapalı.');
 const BASE = ((E.BASE_URL || 'http://localhost:3000').match(/https?:\/\/[^\s)\]]+/) || ['http://localhost:3000'])[0].replace(/\/+$/, '');
 const PORT = +E.PORT || 3000, PROD = E.NODE_ENV === 'production' || !!E.RENDER;
 
@@ -172,9 +174,57 @@ const fail = k => { const a = tries.get(k) || []; a.push(Date.now()); tries.set(
 const norm = e => String(e ?? '').trim().toLowerCase();
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '8mb' })); app.use(express.urlencoded({ extended: false })); app.use(express.static(path.join(__dirname, 'public')));
-const sess = q => { const t = (q.headers.cookie || '').match(/sid=([a-f0-9]+)/); return t && sessions.get(t[1]) };
-const login = (r, d) => { const id = crypto.randomBytes(24).toString('hex'); sessions.set(id, d); r.setHeader('Set-Cookie', `sid=${id}; HttpOnly; Path=/; SameSite=Lax${BASE.startsWith('https') ? '; Secure' : ''}`) };
+app.disable('x-powered-by');
+
+// ---- Güvenlik başlıkları ----
+app.use((q, r, n) => {
+  r.setHeader('X-Content-Type-Options', 'nosniff');
+  r.setHeader('X-Frame-Options', 'DENY');
+  r.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  r.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  r.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'");
+  if (BASE.startsWith('https')) r.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  n();
+});
+
+// ---- İstek boyutu: görsel yükleme dışında küçük tut ----
+const jsonSmall = express.json({ limit: '100kb' }), jsonBig = express.json({ limit: '8mb' });
+app.use((q, r, n) => (q.path === '/api/admin/upload' ? jsonBig : jsonSmall)(q, r, n));
+app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+
+// ---- Başka sitelerden gelen istekleri reddet (CSRF) ----
+app.use('/api', (q, r, n) => {
+  if (q.method === 'GET' || q.method === 'HEAD' || q.path === '/pay/callback') return n();
+  const o = q.headers.origin;
+  if (o) { let h = ''; try { h = new URL(o).host } catch {} if (h !== q.headers.host) return r.status(403).json({ error: 'Geçersiz istek kaynağı' }) }
+  n();
+});
+
+// ---- Temiz adresler: /magaza.html -> /magaza, /index.html -> / ----
+app.use((q, r, n) => {
+  if (q.method !== 'GET' && q.method !== 'HEAD') return n();
+  const m = q.path.match(/^(.*\/)?([^/]+)\.html$/);
+  if (!m) return n();
+  const dir = m[1] || '/', target = m[2] === 'index' ? dir : dir + m[2];
+  r.redirect(301, target + q.originalUrl.slice(q.path.length));
+});
+app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+
+// ---- Oturumlar: süreli, admin daha kısa ----
+const SESSION_TTL = 7 * 24 * 3600e3, ADMIN_TTL = 8 * 3600e3;
+const cookie = (id, ms) => `sid=${id}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${Math.floor(ms / 1000)}${BASE.startsWith('https') ? '; Secure' : ''}`;
+const sid = q => ((q.headers.cookie || '').match(/(?:^|;\s*)sid=([a-f0-9]{48})(?:;|$)/) || [])[1];
+const sess = q => { const id = sid(q), s = id && sessions.get(id); if (!s) return null; if (Date.now() > s.exp) { sessions.delete(id); return null } return s };
+const login = (r, d) => { const id = crypto.randomBytes(24).toString('hex'), ttl = d.admin ? ADMIN_TTL : SESSION_TTL; sessions.set(id, { ...d, exp: Date.now() + ttl }); r.setHeader('Set-Cookie', cookie(id, ttl)) };
+const dropUserSessions = uid => { for (const [k, s] of sessions) if (s.uid === uid) sessions.delete(k) };
+setInterval(() => {
+  const t = Date.now();
+  for (const [k, s] of sessions) if (t > s.exp) sessions.delete(k);
+  for (const [k, a] of tries) if (!a.length || t - a[a.length - 1] > 15 * 60000) tries.delete(k);
+}, 10 * 60000).unref();
+const safeEq = (a, b) => crypto.timingSafeEqual(crypto.createHash('sha256').update(String(a ?? '')).digest(), crypto.createHash('sha256').update(String(b ?? '')).digest());
+const str = (v, max) => String(v ?? '').trim().slice(0, max);
+const okEmail = e => e.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 const needUser = (q, r, n) => { const s = sess(q); if (!s || !s.uid) return r.status(401).json({ error: 'Giriş yapın' }); q.s = s; n() };
 const needAdmin = (q, r, n) => { const s = sess(q); if (!s || !s.admin) return r.status(403).json({ error: 'Yetkisiz' }); n() };
 const getUser = email => d1Get('SELECT * FROM users WHERE lower(email)=?', [email]);
@@ -194,8 +244,10 @@ const checkCode = async (email, code) => {
 
 app.post('/api/register', async (q, r) => {
   try {
-    const name = String(q.body.name || '').trim(), email = norm(q.body.email), pass = q.body.pass;
-    if (!name || !/^\S+@\S+\.\S+$/.test(email) || (pass || '').length < 6) return r.status(400).json({ error: 'Geçerli ad, e-posta ve en az 6 haneli şifre girin' });
+    const name = str(q.body.name, 80), email = norm(q.body.email), pass = typeof q.body.pass === 'string' ? q.body.pass : '';
+    if (!name || !okEmail(email) || pass.length < 6) return r.status(400).json({ error: 'Geçerli ad, e-posta ve en az 6 haneli şifre girin' });
+    if (pass.length > 72) return r.status(400).json({ error: 'Şifre en fazla 72 karakter olabilir' });
+    const kr = 'r' + q.ip; if (limited(kr, 10)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk sonra tekrar deneyin' }); fail(kr);
     const ex = await getUser(email); if (ex && ex.verified) return r.status(400).json({ error: 'Bu e-posta kayıtlı' });
     if (sendLimited(email)) return r.status(429).json({ error: 'Çok fazla kod istendi, 15 dk sonra tekrar deneyin' });
     const h = bcrypt.hashSync(pass, 10);
@@ -213,9 +265,10 @@ app.post('/api/verify', async (q, r) => {
 });
 app.post('/api/login', async (q, r) => {
   try {
-    const k = 'l' + q.ip; if (limited(k, 8)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk sonra tekrar deneyin' });
-    const u = await d1Get('SELECT * FROM users WHERE lower(email)=? AND verified=1', [norm(q.body.email)]);
-    if (!u || !bcrypt.compareSync(q.body.pass || '', u.pass)) { fail(k); return r.status(400).json({ error: 'E-posta veya şifre hatalı' }) } login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
+    const email = norm(q.body.email), k = 'l' + q.ip, ke = 'le' + email;
+    if (limited(k, 8) || limited(ke, 10)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk sonra tekrar deneyin' });
+    const u = await d1Get('SELECT * FROM users WHERE lower(email)=? AND verified=1', [email]);
+    if (!u || !bcrypt.compareSync(String(q.body.pass ?? '').slice(0, 72), u.pass)) { fail(k); fail(ke); return r.status(400).json({ error: 'E-posta veya şifre hatalı' }) } login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
   } catch (e) { console.error(e); r.status(500).json({ error: 'Sunucu hatası' }) }
 });
 app.post('/api/forgot', async (q, r) => {
@@ -227,12 +280,15 @@ app.post('/api/forgot', async (q, r) => {
 });
 app.post('/api/reset', async (q, r) => {
   try {
-    if ((q.body.pass || '').length < 6) return r.status(400).json({ error: 'Şifre en az 6 karakter' });
+    const pass = typeof q.body.pass === 'string' ? q.body.pass : '';
+    if (pass.length < 6 || pass.length > 72) return r.status(400).json({ error: 'Şifre 6 ile 72 karakter arasında olmalı' });
     const u = await checkCode(norm(q.body.email), q.body.code); if (!u) return r.status(400).json({ error: 'Kod hatalı veya süresi dolmuş. Yeni kod isteyebilirsiniz.' });
-    await d1Query('UPDATE users SET pass=?,code=NULL WHERE id=?', [bcrypt.hashSync(q.body.pass, 10), u.id]); login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
+    await d1Query('UPDATE users SET pass=?,code=NULL WHERE id=?', [bcrypt.hashSync(pass, 10), u.id]);
+    dropUserSessions(u.id); // şifre değişince eski oturumlar kapanır
+    login(r, { uid: u.id, name: u.name }); r.json({ ok: true })
   } catch (e) { console.error(e); r.status(500).json({ error: 'Sunucu hatası' }) }
 });
-app.post('/api/logout', (q, r) => { const t = (q.headers.cookie || '').match(/sid=([a-f0-9]+)/); if (t) sessions.delete(t[1]); r.json({ ok: true }) });
+app.post('/api/logout', (q, r) => { const id = sid(q); if (id) sessions.delete(id); r.setHeader('Set-Cookie', cookie('', 0)); r.json({ ok: true }) });
 app.get('/api/me', (q, r) => { const s = sess(q); r.json(s ? { name: s.name, admin: !!s.admin, user: !!s.uid } : {}) });
 app.get('/api/products', async (q, r) => {
   try { r.json(await d1All('SELECT * FROM products ORDER BY id DESC')) }
@@ -244,8 +300,11 @@ app.get('/api/posts', async (q, r) => {
 });
 app.post('/api/contact', async (q, r) => {
   try {
-    const { name, email, text } = q.body; if (!name || !email || !text) return r.status(400).json({ error: 'Tüm alanlar gerekli' });
-    await d1Query('INSERT INTO messages(name,email,text) VALUES(?,?,?)', [name, norm(email), text]); r.json({ ok: true })
+    const name = str(q.body.name, 80), email = norm(q.body.email).slice(0, 254), text = str(q.body.text, 3000);
+    if (!name || !email || !text) return r.status(400).json({ error: 'Tüm alanlar gerekli' });
+    if (!okEmail(email)) return r.status(400).json({ error: 'Geçerli bir e-posta girin' });
+    const k = 'm' + q.ip; if (limited(k, 5)) return r.status(429).json({ error: 'Çok fazla mesaj gönderildi, 15 dk sonra tekrar deneyin' }); fail(k);
+    await d1Query('INSERT INTO messages(name,email,text) VALUES(?,?,?)', [name, email, text]); r.json({ ok: true })
   } catch (e) { console.error(e); r.status(500).json({ error: 'Mesaj gönderilemedi' }) }
 });
 app.get('/api/my-orders', needUser, async (q, r) => {
@@ -255,11 +314,16 @@ app.get('/api/my-orders', needUser, async (q, r) => {
 
 app.post('/api/order', needUser, async (q, r) => {
   try {
-    const { items = {}, address = {}, method } = q.body;
+    const { method } = q.body, items = q.body.items && typeof q.body.items === 'object' ? q.body.items : {}, a0 = q.body.address || {};
     if (!['card', 'cod', 'eft'].includes(method)) return r.status(400).json({ error: 'Ödeme yöntemi seçin' });
+    const address = { name: str(a0.name, 100), phone: str(a0.phone, 20), city: str(a0.city, 60), address: str(a0.address, 500) };
     if (!address.name || !address.phone || !address.city || !address.address) return r.status(400).json({ error: 'Teslimat bilgilerini doldurun' });
+    if (!/^\+?[0-9 ()-]{10,20}$/.test(address.phone)) return r.status(400).json({ error: 'Geçerli bir telefon numarası girin' });
+    const entries = Object.entries(items);
+    if (entries.length > 50) return r.status(400).json({ error: 'Sepette çok fazla ürün var' });
+    const ko = 'o' + q.s.uid; if (limited(ko, 10)) return r.status(429).json({ error: 'Çok fazla sipariş denemesi, 15 dk sonra tekrar deneyin' }); fail(ko);
     let total = 0; const list = [];
-    for (const [id, n] of Object.entries(items)) {
+    for (const [id, n] of entries) {
       const p = await d1Get('SELECT * FROM products WHERE id=?', [id]), qty = Math.min(parseInt(n) || 0, 99);
       if (p && qty > 0) { total += p.price * qty; list.push({ id: p.id, name: p.name, category: p.category, qty, price: p.price }) }
     }
@@ -283,18 +347,20 @@ app.post('/api/order', needUser, async (q, r) => {
 app.post('/api/pay/callback', async (q, r) => {
   try {
     const token = q.body.token, o = iyzi && await d1Get('SELECT * FROM orders WHERE iyzi_token=? AND status=?', [token, 'Ödeme Bekliyor']);
-    if (!o) return r.redirect('/siparislerim.html');
+    if (!o) return r.redirect('/siparislerim');
     iyzi.checkoutForm.retrieve({ locale: 'tr', conversationId: String(o.id), token }, async (err, res) => {
       const ok = !err && res.paymentStatus === 'SUCCESS' && String(res.basketId) === String(o.id) && Math.abs(parseFloat(res.paidPrice) - o.total) < 0.01;
-      await d1Query('UPDATE orders SET status=? WHERE id=?', [ok ? 'Hazırlanıyor' : 'İptal', o.id]); r.redirect('/siparislerim.html?' + (ok ? 'ok' : 'fail'))
+      await d1Query('UPDATE orders SET status=? WHERE id=?', [ok ? 'Hazırlanıyor' : 'İptal', o.id]); r.redirect('/siparislerim?' + (ok ? 'ok' : 'fail'))
     })
-  } catch (e) { console.error(e); r.redirect('/siparislerim.html?fail') }
+  } catch (e) { console.error(e); r.redirect('/siparislerim?fail') }
 });
 
 // Admin
 app.post('/api/admin/login', (q, r) => {
   const k = 'a' + q.ip; if (limited(k)) return r.status(429).json({ error: 'Çok fazla deneme, 15 dk bekleyin' });
-  if (q.body.user === ADMIN_USER && q.body.pass === ADMIN_PASS) { login(r, { admin: true, name: 'Admin' }); return r.json({ ok: true }) } fail(k); r.status(400).json({ error: 'Hatalı bilgi' })
+  if (!ADMIN_PASS) return r.status(503).json({ error: 'Admin girişi yapılandırılmamış' });
+  const okUser = safeEq(q.body.user, ADMIN_USER), okPass = safeEq(q.body.pass, ADMIN_PASS);
+  if (okUser && okPass) { login(r, { admin: true, name: 'Admin' }); return r.json({ ok: true }) } fail(k); r.status(400).json({ error: 'Hatalı bilgi' })
 });
 app.post('/api/admin/upload', needAdmin, async (q, r) => {
   try {
@@ -315,8 +381,10 @@ app.post('/api/admin/upload', needAdmin, async (q, r) => {
 });
 app.post('/api/admin/products', needAdmin, async (q, r) => {
   try {
-    const { name, category, price, image, description } = q.body; if (!name || !(price > 0)) return r.status(400).json({ error: 'Ad ve fiyat gerekli' });
-    await d1Query('INSERT INTO products(name,category,price,image,description) VALUES(?,?,?,?,?)', [name, category || 'Genel', price, image || '', description || '']); r.json({ ok: true })
+    const name = str(q.body.name, 120), category = str(q.body.category, 60) || 'Genel', price = Number(q.body.price), image = str(q.body.image, 500), description = str(q.body.description, 3000);
+    if (!name || !(price > 0) || price > 1e7) return r.status(400).json({ error: 'Ad ve fiyat gerekli' });
+    if (image && !/^(https:\/\/|\/uploads\/)/.test(image)) return r.status(400).json({ error: 'Görsel adresi https:// ile başlamalı' });
+    await d1Query('INSERT INTO products(name,category,price,image,description) VALUES(?,?,?,?,?)', [name, category, price, image, description]); r.json({ ok: true })
   } catch (e) { console.error(e); r.status(500).json({ error: 'Ürün eklenemedi' }) }
 });
 app.delete('/api/admin/products/:id', needAdmin, async (q, r) => {

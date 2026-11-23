@@ -1,4 +1,4 @@
-// Ortak: menü, fare efekti, scroll animasyonu, sepet, API yardımcıları
+// Ortak: menü, scroll animasyonu, sepet, API yardımcıları
 const api = (u, m = 'GET', b) => fetch('/api/' + u, {
   method: m,
   headers: { 'Content-Type': 'application/json' },
@@ -36,6 +36,15 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({
   "'": '&#39;'
 }[c]));
 
+// Tüm fiyatlar tek biçimde: 1.500,00 ₺
+const money = n => (+n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+
+// Sipariş durumuna göre renkli nokta sınıfı
+const statusCls = s => ({
+  'Ödeme Bekliyor': 's-wait', 'Havale Bekleniyor': 's-wait', 'Hazırlanıyor': 's-prep',
+  'Kargoda': 's-ship', 'Teslim Edildi': 's-done', 'İptal': 's-cancel'
+}[s] || '');
+
 const reveal = () => {
   const io = new IntersectionObserver(
     es => es.forEach(e => e.isIntersecting && (e.target.classList.add('show'), io.unobserve(e.target))),
@@ -50,33 +59,24 @@ addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  const isMobile = window.matchMedia('(max-width: 600px)').matches;
-  if (!isMobile) {
-    const g = document.createElement('div');
-    g.id = 'glow';
-    document.body.prepend(g);
-    addEventListener('mousemove', e => {
-      g.style.left = e.clientX + 'px';
-      g.style.top = e.clientY + 'px';
-    });
-  }
-
+  reveal(); // sabit içerik API'yi beklemeden görünsün
   const me = await api('me');
-  const p = location.pathname.split('/').pop() || 'index.html';
+  // Temiz adresler: /magaza, /sepet … (".html" görünmez)
+  const p = location.pathname.replace(/\.html$/, '').replace(/\/index$/, '/') || '/';
   const L = [
-    ['index.html', 'Ana Sayfa'],
-    ['magaza.html', 'Mağaza'],
-    ['blog.html', 'Blog'],
-    ['iletisim.html', 'İletişim'],
-    ['sepet.html', 'Sepet (<span id="cn">0</span>)']
+    ['/', 'Ana sayfa'],
+    ['/magaza', 'Mağaza'],
+    ['/blog', 'Blog'],
+    ['/iletisim', 'İletişim'],
+    ['/sepet', 'Sepet<span class="cnt" id="cn">0</span>']
   ];
 
-  if (me.user) L.push(['siparislerim.html', 'Siparişlerim']);
-  L.push(me.user ? ['#', 'Çıkış (' + esc(me.name) + ')'] : ['giris.html', 'Giriş / Üye Ol']);
-  if (me.admin) L.push(['admin.html', 'Admin']);
+  if (me.user) L.push(['/siparislerim', 'Siparişlerim']);
+  L.push(me.user ? ['#', 'Çıkış (' + esc(me.name) + ')'] : ['/giris', 'Giriş yap']);
+  if (me.admin) L.push(['/admin', 'Admin']);
 
   const h = document.createElement('header');
-  h.innerHTML = '<span class="logo">MAĞAZAM</span><nav>' +
+  h.innerHTML = '<a class="logo" href="/"><i></i>berkburada</a><nav>' +
     L.map(([u, t]) => `<a href="${u}" class="${u == p ? 'on' : ''}" ${u == '#' ? 'id="out"' : ''}>${t}</a>`).join('') +
     '</nav>';
   document.body.prepend(h);
@@ -87,12 +87,12 @@ addEventListener('DOMContentLoaded', async () => {
     o.onclick = async e => {
       e.preventDefault();
       await api('logout', 'POST');
-      location.href = 'index.html';
+      location.href = '/';
     };
   }
 
   const f = document.createElement('footer');
-  f.textContent = '© Mağazam';
+  f.innerHTML = '<span>© ' + new Date().getFullYear() + ' berkburada</span><span>Kart, havale veya kapıda ödeme</span>';
   document.body.append(f);
   cart.badge();
   window.pageInit && await window.pageInit(me);
